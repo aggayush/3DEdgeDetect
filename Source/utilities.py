@@ -3,8 +3,11 @@
 ########################################
 
 import argparse
+from os import listdir
+from os.path import isfile, join
 
-def arg_creater():
+
+def arg_creator():
     parser = argparse.ArgumentParser(description='Arguments for the edge detector')
     parser.add_argument(name='--train-data-path',
                         default='./Data/Train/',
@@ -32,3 +35,13 @@ def arg_creater():
                         help='if data is streamed input or to be read from file')
 
     return parser
+
+
+def path_reader(path):
+
+    if path is None:
+        return None
+
+    fileList = [f for f in listdir(path) if isfile(join(path,f))]
+
+    return fileList

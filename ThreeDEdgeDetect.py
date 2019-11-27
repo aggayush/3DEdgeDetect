@@ -5,6 +5,7 @@
 
 import open3d
 import tensorflow as tf
+from Source.utilities import path_reader
 
 
 class ThreeDEdgeDetector:
@@ -25,5 +26,21 @@ class ThreeDEdgeDetector:
             self.isTrain = args.isTrain
             self.isStreamed = args.isStreamed
 
-    def detect(self):
+    def prepare_data(self):
+
+        if self.isTrain:
+            path = self.trainDataPath
+        elif self.isStreamed:
+            path = None
+        else:
+            path = self.testDataPath
+
+        fileList = path_reader(path)
+
+        print(fileList)
+
+
+     def run(self):
+
+         self.prepare_data()
         
