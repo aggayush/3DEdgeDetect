@@ -2,9 +2,9 @@
 # Main class file to execute the code
 ################################
 
-import open3d
 import tensorflow as tf
 import numpy as np
+import os
 from Source.utilities import path_reader, visualize
 
 
@@ -12,6 +12,7 @@ class ThreeDEdgeDetector:
     VOXEL_GRID_X = 256
     VOXEL_GRID_Y = 256
     VOXEL_GRID_Z = 256
+    DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self,args=None):
         if args is None:
@@ -21,6 +22,8 @@ class ThreeDEdgeDetector:
             self.modelPath = ""
             self.isTrain = True
             self.isStreamed = False
+            self.batchSize = 1
+            self.shuffleBufferSize = 1000
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -28,57 +31,69 @@ class ThreeDEdgeDetector:
             self.modelPath = args.modelPath
             self.isTrain = args.isTrain
             self.isStreamed = args.isStreamed
+            self.batchSize = args.batchSize
+            self.shuffleBufferSize = args.shuffleBufferSize
+        self.prefetchBufferSize=10
 
-        self.dataSize = 0
+    def process_data_files(self, filePath):
 
-    # function to create the voxel grid and return
-    def preprocessing(self, data):
-        grid = np.zeros((self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z), dtype=np.bool)
+        grid = tf.zeros([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
+                        tf.bool)
 
-        #Normalizing in unit sphere
-        centroid = np.mean(data, axis=0)
+        rawData = tf.io.read_file(filePath)
+        records = tf.strings.split(rawData, sep='\r\n')
+        data = tf.io.decode_csv(records,
+                               self.DATA_DEFAULTS,
+                               field_delim=' ')
+        # Normalization to unit sphere
+        data = tf.transpose(data)
+        centroid = tf.math.reduce_mean(data, axis=0)
         data = data - centroid
-        furthestDistanceFromCentre = np.max(np.sqrt(np.sum(abs(data)**2, axis=-1)))
-        data = data/furthestDistanceFromCentre
-
-        #visualize(data)
+        furthestDistanceFromCentre = tf.math.reduce_max(tf.math.sqrt(tf.math.reduce_sum(tf.math.square(tf.math.abs(data)), axis=-1)))
+        data = tf.math.divide(data, furthestDistanceFromCentre)
 
         #Voxelization of data
-        gridX = np.floor(data[:, 0]*(self.VOXEL_GRID_X/2) + self.VOXEL_GRID_X/2)
-        gridY = np.floor(data[:, 1]*(self.VOXEL_GRID_X/2) + self.VOXEL_GRID_X/2)
-        gridZ = np.floor(data[:, 2]*(self.VOXEL_GRID_X/2) + self.VOXEL_GRID_X/2)
+        gridX = tf.floor(tf.add(tf.multiply(data[:, 0], (self.VOXEL_GRID_X/2)), self.VOXEL_GRID_X/2))
+        gridY = tf.floor(tf.add(tf.multiply(data[:, 1], (self.VOXEL_GRID_Y/2)), self.VOXEL_GRID_Y/2))
+        gridZ = tf.floor(tf.add(tf.multiply(data[:, 2], (self.VOXEL_GRID_Z/2)), self.VOXEL_GRID_Z/2))
 
-        indexes = (tuple(gridX.astype(int)), tuple(gridY.astype(int)), tuple(gridZ.astype(int)))
+        indexes = tf.stack([gridX, gridY, gridZ], axis=1)
+        indexes = tf.cast(indexes, tf.int64)
+        shape = tf.shape(indexes)
+        sparseValues = tf.ones([shape[0]], tf.bool)
+        delta = tf.sparse.SparseTensor(indices=indexes, values=sparseValues, dense_shape=[self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z])
+        grid = tf.math.logical_or(grid, tf.sparse.to_dense(delta, default_value=False, validate_indices=False))
 
-        grid[indexes] = True
+        return grid, centroid, furthestDistanceFromCentre
 
-        # visualization
-        # gridX = (gridX - self.VOXEL_GRID_X/2)/(self.VOXEL_GRID_X/2)
-        # gridY = (gridY - self.VOXEL_GRID_Y/2)/(self.VOXEL_GRID_Y/2)
-        # gridZ = (gridZ - self.VOXEL_GRID_X/2)/(self.VOXEL_GRID_Z/2)
-        # points = np.stack((gridX, gridY, gridZ), axis=1)
-        # points = np.unique(points, axis=0)
-        # visualize(points)
-
-        return grid
-
-    def prepare_data(self):
+    def read_data(self):
 
         if self.isTrain:
-            path = self.trainDataPath
-        elif self.isStreamed:
-            path = None
+            path = os.path.abspath(self.trainDataPath)
         else:
-            path = self.testDataPath
+            path = os.path.abspath(self.testDataPath)
 
-        fileList = path_reader(path)
+        filesDs = tf.data.Dataset.list_files(os.path.join(path, '*.txt'))
+        processedData = filesDs.map(lambda filePath: self.process_data_files(filePath))
+        processedData = processedData.shuffle(self.shuffleBufferSize)
+        processedData = processedData.batch(self.batchSize)
+        processedData = processedData.prefetch(self.prefetchBufferSize)
 
-        self.dataSize = len(fileList)
-        data = open3d.io.read_point_cloud(fileList[0])
-        data = np.asarray(data.points)
-        data = self.preprocessing(data)
+        # # to see filename and visualize data
+        # for f in filesDs.take(1):
+        #     print(f.numpy())
+        #     visualize(f.numpy().decode("utf-8"))
+
+        return processedData
 
     def run(self):
 
-        self.prepare_data()
+        fileDS = self.read_data()
+
+        grid, centroid, maxDistance = next(iter(fileDS))
+        print(grid)
+        print()
+        print(centroid)
+        print()
+        print(maxDistance)
 

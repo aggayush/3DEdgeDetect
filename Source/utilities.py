@@ -6,6 +6,7 @@ import argparse
 from os import listdir
 from os.path import isfile, join
 import open3d
+import numpy as np
 
 
 def arg_creator():
@@ -36,6 +37,14 @@ def arg_creator():
                         default=False,
                         dest='isStreamed',
                         help='if data is streamed input or to be read from file')
+    parser.add_argument('--batch-size',
+                        default=1,
+                        dest='batchSize',
+                        help='batch Size to process')
+    parser.add_argument('--shuffle-buffer-size',
+                        default=1000,
+                        dest='shuffleBufferSize',
+                        help='Data shuffle buffer size')
 
     return parser
 
@@ -49,8 +58,13 @@ def path_reader(path):
 
     return fileList
 
-def visualize(points):
+def visualize(filePath):
 
+    points = []
+    with open(filePath, "r") as file:
+        for line in file:
+            tokens = line.split()
+            points.append(list(map(float, tokens)))
     pcd = open3d.geometry.PointCloud()
-    pcd.points = open3d.utility.Vector3dVector(points)
+    pcd.points = open3d.utility.Vector3dVector(np.array(points))
     open3d.visualization.draw_geometries([pcd])
