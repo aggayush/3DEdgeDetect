@@ -1,7 +1,8 @@
 ################################
 # Main class file to execute the code
-################################
+################################\
 
+from __future__ import absolute_import, division, print_function, unicode_literals
 import tensorflow as tf
 import os
 import tensorflow.keras as tfk
@@ -120,6 +121,15 @@ class ThreeDEdgeDetector:
         self.model.add(tfk.layers.Dropout(self.dropoutRate))
         self.model.add(tfk.layers.MaxPool3D((2, 2, 2),
                                             padding='same'))
+        self.model.add(tfk.layers.Conv3D(1,
+                                        (3, 3, 3),
+                                        strides=(1, 1, 1),
+                                        padding='same',
+                                        activation=self.activation,
+                                        input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
+                                        kernel_initializer=tf.initializers.glorot_normal))
+        self.model.add(tfk.layers.BatchNormalization())
+
 
         self.model.summary()
 
