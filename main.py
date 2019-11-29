@@ -4,7 +4,7 @@
 
 
 from Source.utilities import arg_creator
-from ThreeDEdgeDetect import ThreeDEdgeDetector
+from Source.ThreeDEdgeDetect import ThreeDEdgeDetector
 
 
 if __name__ == "__main__":

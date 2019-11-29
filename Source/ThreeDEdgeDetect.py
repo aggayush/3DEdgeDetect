@@ -3,8 +3,8 @@
 ################################
 
 import tensorflow as tf
-import numpy as np
 import os
+import tensorflow.keras as tfk
 from Source.utilities import path_reader, visualize
 
 
@@ -24,6 +24,8 @@ class ThreeDEdgeDetector:
             self.isStreamed = False
             self.batchSize = 1
             self.shuffleBufferSize = 1000
+            self.activation = 'relu'
+            self.dropoutRate = 0.01
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -33,7 +35,12 @@ class ThreeDEdgeDetector:
             self.isStreamed = args.isStreamed
             self.batchSize = args.batchSize
             self.shuffleBufferSize = args.shuffleBufferSize
+            self.activation = args.activation
+            self.dropoutRate = args.dropoutRate
         self.prefetchBufferSize=10
+        self.trainDataset = None
+        self.testDataset = None
+        self.model = None
 
     def process_data_files(self, filePath):
 
@@ -68,32 +75,63 @@ class ThreeDEdgeDetector:
 
     def read_data(self):
 
-        if self.isTrain:
-            path = os.path.abspath(self.trainDataPath)
-        else:
-            path = os.path.abspath(self.testDataPath)
+        trainPath = os.path.abspath(self.trainDataPath)
+        testPath = os.path.abspath(self.testDataPath)
 
-        filesDs = tf.data.Dataset.list_files(os.path.join(path, '*.txt'))
-        processedData = filesDs.map(lambda filePath: self.process_data_files(filePath))
-        processedData = processedData.shuffle(self.shuffleBufferSize)
-        processedData = processedData.batch(self.batchSize)
-        processedData = processedData.prefetch(self.prefetchBufferSize)
+        # # Display the files in path
+        # trainFiles = path_reader(trainPath)
+        # testFiles = path_reader(testPath)
+        # print(trainFiles)
+        # print(testFiles)
+
+        trainFilesDs = tf.data.Dataset.list_files(os.path.join(trainPath, '*.txt'))
+        testFilesDs = tf.data.Dataset.list_files(os.path.join(testPath, '*.txt'))
+
+        self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
+        self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
+        self.trainDataset = self.trainDataset.batch(self.batchSize)
+        self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
+
+        self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
+        self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
+        self.testDataset = self.testDataset.batch(self.batchSize)
+        self.testDataset = self.testDataset.prefetch(self.prefetchBufferSize)
 
         # # to see filename and visualize data
-        # for f in filesDs.take(1):
+        # for f in trainFilesDs.take(1):
+        #     print(f.numpy())
+        #     visualize(f.numpy().decode("utf-8"))
+        # for f in testFilesDs.take(1):
         #     print(f.numpy())
         #     visualize(f.numpy().decode("utf-8"))
 
-        return processedData
+    def create_model(self):
+
+        self.model = tfk.models.Sequential()
+
+        self.model.add(tfk.layers.Conv3D(8,
+                                        (3, 3, 3),
+                                        strides=(2, 2, 2),
+                                        padding='same',
+                                        activation=self.activation,
+                                        input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
+                                        kernel_initializer=tf.initializers.glorot_normal))
+        self.model.add(tfk.layers.BatchNormalization())
+        self.model.add(tfk.layers.Dropout(self.dropoutRate))
+        self.model.add(tfk.layers.MaxPool3D((2, 2, 2),
+                                            padding='same'))
+
+        self.model.summary()
 
     def run(self):
 
-        fileDS = self.read_data()
+        # try:
+        #     self.read_data()
+        # except:
+        #     print('Data read Error')
+        #     exit(1)
 
-        grid, centroid, maxDistance = next(iter(fileDS))
-        print(grid)
-        print()
-        print(centroid)
-        print()
-        print(maxDistance)
+        self.create_model()
+
+
 

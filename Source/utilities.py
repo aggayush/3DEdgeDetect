@@ -45,6 +45,14 @@ def arg_creator():
                         default=1000,
                         dest='shuffleBufferSize',
                         help='Data shuffle buffer size')
+    parser.add_argument('--activation',
+                        default='relu',
+                        dest='activation',
+                        help='Activation function to use')
+    parser.add_argument('--dropout-rate',
+                        default=0.01,
+                        dest='dropoutRate',
+                        help='Dropout rate for the dropout layers')
 
     return parser
 
