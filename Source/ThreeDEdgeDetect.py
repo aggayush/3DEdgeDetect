@@ -111,7 +111,7 @@ class ThreeDEdgeDetector:
 
         self.model = tfk.models.Sequential()
 
-        self.model.add(tfk.layers.Conv3D(8,
+        self.model.add(tfk.layers.Conv3D(32,
                                         (3, 3, 3),
                                         strides=(2, 2, 2),
                                         padding='same',
@@ -130,7 +130,8 @@ class ThreeDEdgeDetector:
                                         input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
                                         kernel_initializer=tf.initializers.glorot_normal))
         self.model.add(tfk.layers.BatchNormalization())
-        self.model.add(SobelFilter(trainable=False))
+        self.model.add(SobelFilter(name='output_1', trainable=False))
+        self.model.add(tfk.layers.BatchNormalization())
 
         self.model.summary()
 

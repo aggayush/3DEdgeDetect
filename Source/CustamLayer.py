@@ -7,10 +7,6 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 import tensorflow.keras as tfk
 
-@tf.function
-def magnitude_calc(x, y, z):
-
-    return tf.sqrt(tf.add_n(tf.square(x), tf.square(y), tf.square(z)))
 
 class SobelFilter(tfk.layers.Layer):
     def __init__(self, **kwargs):
@@ -70,13 +66,14 @@ class SobelFilter(tfk.layers.Layer):
         self.convY = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelY)
         self.convZ = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelZ)
 
-    def call(self, input, training=False):
+    def call(self, input):
 
         x = self.convX(input)
         y = self.convY(input)
         z = self.convZ(input)
 
-        magOut = magnitude_calc(x, y, z)
-        return magOut
+        mag = tf.sqrt(tf.square(x) + tf.square(y) + tf.square(z))
+
+        return mag
 
 
