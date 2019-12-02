@@ -6,6 +6,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 import os
 import tensorflow.keras as tfk
+from Source.CustamLayer import SobelFilter
 from Source.utilities import path_reader, visualize
 
 
@@ -129,7 +130,7 @@ class ThreeDEdgeDetector:
                                         input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
                                         kernel_initializer=tf.initializers.glorot_normal))
         self.model.add(tfk.layers.BatchNormalization())
-
+        self.model.add(SobelFilter(trainable=False))
 
         self.model.summary()
 
