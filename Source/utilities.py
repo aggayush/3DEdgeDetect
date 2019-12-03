@@ -28,9 +28,13 @@ def arg_creator():
                         default='./Model/',
                         dest='modelPath',
                         help='Path to the model save folder (same for loading pretrained model)')
+    parser.add_argument('--model-name',
+                        default='depth_model.h5',
+                        dest='modelName',
+                        help='Model filename to load into memory')
     parser.add_argument('--is-train',
                         action='store_true',
-                        default=True,
+                        default=False,
                         dest='isTrain',
                         help='To run training or testing')
     parser.add_argument('--is-streamed',
@@ -54,7 +58,19 @@ def arg_creator():
                         default=0.01,
                         dest='dropoutRate',
                         help='Dropout rate for the dropout layers')
-
+    parser.add_argument('--use-pretrained',
+                        default=False,
+                        action='store_true',
+                        dest='usePreTrained',
+                        help='To use pretrained weights or not')
+    parser.add_argument('--learning-rate',
+                        default=0.001,
+                        dest='learningRate',
+                        help='Learning rate of the network')
+    parser.add_argument('--epochs',
+                        default=20,
+                        dest='epochs',
+                        help='No of epochs to run the system for')
     return parser
 
 
