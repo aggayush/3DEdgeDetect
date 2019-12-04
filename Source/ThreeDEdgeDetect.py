@@ -6,8 +6,8 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 import os
 import tensorflow.keras as tfk
-import numpy as np
-import open3d
+import math
+import glob
 from Source.CustamLayer import SobelFilter
 from Source.utilities import path_reader, visualize
 
@@ -34,6 +34,7 @@ class ThreeDEdgeDetector:
             self.dropoutRate = 0.01
             self.learningRate = 0.001
             self.epochs = 20
+            self.trainValRatio = 0.2
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -49,6 +50,7 @@ class ThreeDEdgeDetector:
             self.dropoutRate = args.dropoutRate
             self.learningRate = args.learningRate
             self.epochs = args.epochs
+            self.trainValRatio = args.trainValRatio
         self.prefetchBufferSize=10
         self.trainDataset = None
         self.testDataset = None
@@ -97,13 +99,20 @@ class ThreeDEdgeDetector:
         # print(trainFiles)
         # print(testFiles)
 
-        trainFilesDs = tf.data.Dataset.list_files(os.path.join(trainPath, '*.txt'))
-        testFilesDs = tf.data.Dataset.list_files(os.path.join(testPath, '*.txt'))
+        trainPath = os.path.join(trainPath, '*.txt')
+        testPath = os.path.join(testPath, '*.txt')
+        numElements = len(glob.glob(trainPath))
+        trainFilesDs = tf.data.Dataset.list_files(trainPath)
+        testFilesDs = tf.data.Dataset.list_files(testPath)
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
+        self.valDataset = self.trainDataset.take(math.ceil(self.trainValRatio*numElements))
+
+        self.trainDataset = self.trainDataset.skip(math.ceil(self.trainValRatio*numElements))
         self.trainDataset = self.trainDataset.batch(self.batchSize)
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
+
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
@@ -124,7 +133,7 @@ class ThreeDEdgeDetector:
         if os.path.exists(file):
             self.model.load_weights(file)
         else:
-            print('Pretrained Model not exists. using default weights!!')
+            print('Pre-trained Model not exists. using default weights!!')
 
     def create_model(self):
 
@@ -191,16 +200,22 @@ class ThreeDEdgeDetector:
         layers3 = tfk.layers.Dropout(self.dropoutRate)(layers3)
         edge3 = SobelFilter(name='edge_3', trainable=False)(layers3)
         out3 = tfk.layers.Activation(activation='softmax')(edge3)
+        outt = tfk.layers.Concatenate()([out1, out2, out3])
 
-        self.model = tfk.Model(inputs=input, outputs=[out1, out2, out3])
+        self.model = tfk.Model(inputs=input, outputs=[outt, out1, out2, out3])
 
         opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
         loss = tfk.losses.BinaryCrossentropy()
 
         self.model.compile(optimizer=opt,
-                           loss=loss)
+                           loss=loss,
+                           metrics=['accuracy', tfk.metrics.MeanIoU(num_classes=2)])
 
         self.model.summary()
+
+    def train(self):
+
+        self.model.fit()
 
     def run(self):
 
@@ -216,6 +231,11 @@ class ThreeDEdgeDetector:
 
         if self.usePreTrained:
             self.load_weights()
+
+        # if self.isTrain:
+        #     self.train()
+        # else:
+        #     self.predict()
 
 
 

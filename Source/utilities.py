@@ -71,6 +71,10 @@ def arg_creator():
                         default=20,
                         dest='epochs',
                         help='No of epochs to run the system for')
+    parser.add_argument('--train-val-ratio',
+                        default=0.2,
+                        dest='trainValRatio',
+                        help='Ratio of split of train and validation data')
     return parser
 
 

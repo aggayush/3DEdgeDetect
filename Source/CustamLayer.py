@@ -7,6 +7,8 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import tensorflow as tf
 import tensorflow.keras as tfk
 
+class WeightedBinaryCrossEntropy(tfk.losses.Loss):
+
 
 class SobelFilter(tfk.layers.Layer):
     def __init__(self, **kwargs):
