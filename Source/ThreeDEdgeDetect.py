@@ -8,7 +8,7 @@ import os
 import tensorflow.keras as tfk
 import math
 import glob
-from Source.CustamLayer import SobelFilter
+from Source.CustamLayer import SobelFilter, MergePointCloud
 from Source.utilities import path_reader, visualize
 
 
@@ -28,7 +28,7 @@ class ThreeDEdgeDetector:
             self.isTrain = False
             self.isStreamed = False
             self.usePreTrained = False
-            self.batchSize = 1
+            self.batchSize = 2
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
@@ -200,9 +200,12 @@ class ThreeDEdgeDetector:
         layers3 = tfk.layers.Dropout(self.dropoutRate)(layers3)
         edge3 = SobelFilter(name='edge_3', trainable=False)(layers3)
         out3 = tfk.layers.Activation(activation='softmax')(edge3)
-        outt = tfk.layers.Concatenate()([out1, out2, out3])
+        outFinal = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
+                                   'avg',
+                                   name='output_1',
+                                   trainable=False)([out1, out2, out3])
 
-        self.model = tfk.Model(inputs=input, outputs=[outt, out1, out2, out3])
+        self.model = tfk.Model(inputs=input, outputs=outFinal)
 
         opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
         loss = tfk.losses.BinaryCrossentropy()
@@ -227,10 +230,17 @@ class ThreeDEdgeDetector:
             print(str(e))
             exit(1)
 
-        self.create_model()
+        # self.create_model()
 
-        if self.usePreTrained:
-            self.load_weights()
+        data = next(iter(self.trainDataset))
+        print(tf.shape(data[0]))
+        layer = MergePointCloud([266, 266, 266], 'sum')
+        out = layer([data[0], data[0]])
+        print(tf.shape(out))
+        print(out[1, 1:10])
+
+        # if self.usePreTrained:
+        #     self.load_weights()
 
         # if self.isTrain:
         #     self.train()

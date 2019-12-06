@@ -43,7 +43,7 @@ def arg_creator():
                         dest='isStreamed',
                         help='if data is streamed input or to be read from file')
     parser.add_argument('--batch-size',
-                        default=1,
+                        default=2,
                         dest='batchSize',
                         help='batch Size to process')
     parser.add_argument('--shuffle-buffer-size',
