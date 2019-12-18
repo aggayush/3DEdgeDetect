@@ -9,13 +9,17 @@ import tensorflow.keras as tfk
 import math
 import glob
 from Source.CustamLayer import SobelFilter, MergePointCloud
+from tensorflow.python.framework.ops import disable_eager_execution
 from Source.utilities import path_reader, visualize
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+# disable_eager_execution()
 
 
 class ThreeDEdgeDetector:
-    VOXEL_GRID_X = 256
-    VOXEL_GRID_Y = 256
-    VOXEL_GRID_Z = 256
+    VOXEL_GRID_X = 32
+    VOXEL_GRID_Y = 32
+    VOXEL_GRID_Z = 32
     DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self,args=None):
@@ -24,6 +28,7 @@ class ThreeDEdgeDetector:
             self.testDataPath = './Data/Test/'
             self.outputPath = './Output/'
             self.modelPath = './Model/'
+            self.logDir = './log/'
             self.modelName = 'depth_model.h5'
             self.isTrain = False
             self.isStreamed = False
@@ -40,6 +45,7 @@ class ThreeDEdgeDetector:
             self.testDataPath = args.testDataPath
             self.outputPath = args.outputPath
             self.modelPath = args.modelPath
+            self.logDir = args.logDir
             self.modelName = args.modelName
             self.isTrain = args.isTrain
             self.isStreamed = args.isStreamed
@@ -137,7 +143,7 @@ class ThreeDEdgeDetector:
 
     def create_model(self):
 
-        input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1))
+        input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1), batch_size=self.batchSize)
 
         layers1 = tfk.layers.Conv3D(64,
                                    (3, 3, 3),
@@ -209,7 +215,6 @@ class ThreeDEdgeDetector:
 
         opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
         loss = tfk.losses.BinaryCrossentropy()
-
         self.model.compile(optimizer=opt,
                            loss=loss,
                            metrics=['accuracy', tfk.metrics.MeanIoU(num_classes=2)])
@@ -218,30 +223,45 @@ class ThreeDEdgeDetector:
 
     def train(self):
 
-        self.model.fit()
+        tensorboardCallback = tfk.callbacks.TensorBoard(log_dir=self.logDir, histogram_freq=1)
+
+        self.model.fit(self.trainDataset,
+                       epochs=self.epochs,
+                       validation_data=(self.valDataset, self.valDataset),
+                       callbacks=[tensorboardCallback])
 
     def run(self):
 
+        # disable_eager_execution()
         try:
             self.read_data()
         except Exception as e:
             print('Data read Error')
             print()
-            print(str(e))
+            print(e)
             exit(1)
 
-        # self.create_model()
+        self.create_model()
 
         data = next(iter(self.trainDataset))
-        print(tf.shape(data[0]))
-        layer = MergePointCloud([266, 266, 266], 'sum')
-        out = layer([data[0], data[0]])
-        print(tf.shape(out))
-        print(out[1, 1:10])
+        pred = self.model(data[0])
+        print(pred)
+        # tensorboardCallback = tfk.callbacks.TensorBoard(log_dir=self.logDir, histogram_freq=1)
+        #
+        # self.model.fit(x=data[0],
+        #                y=data[0],
+        #                epochs=self.epochs,
+        #                validation_data=(self.valDataset, self.valDataset),
+        #                callbacks=[tensorboardCallback])
+        # print(tf.shape(data[0]))
+        # layer = MergePointCloud([32, 32, 32], 'sum')
+        # out = layer([data[0], data[0]])
+        # print(tf.shape(out))
+        # print(out)
 
         # if self.usePreTrained:
         #     self.load_weights()
-
+        #
         # if self.isTrain:
         #     self.train()
         # else:

@@ -28,13 +28,17 @@ def arg_creator():
                         default='./Model/',
                         dest='modelPath',
                         help='Path to the model save folder (same for loading pretrained model)')
+    parser.add_argument('--log-dir',
+                        default='./log/',
+                        dest='logDir',
+                        help='Log Directory path')
     parser.add_argument('--model-name',
                         default='depth_model.h5',
                         dest='modelName',
                         help='Model filename to load into memory')
     parser.add_argument('--is-train',
                         action='store_true',
-                        default=False,
+                        default=True,
                         dest='isTrain',
                         help='To run training or testing')
     parser.add_argument('--is-streamed',
@@ -75,6 +79,7 @@ def arg_creator():
                         default=0.2,
                         dest='trainValRatio',
                         help='Ratio of split of train and validation data')
+
     return parser
 
 
