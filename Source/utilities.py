@@ -68,11 +68,11 @@ def arg_creator():
                         dest='usePreTrained',
                         help='To use pretrained weights or not')
     parser.add_argument('--learning-rate',
-                        default=0.001,
+                        default=0.01,
                         dest='learningRate',
                         help='Learning rate of the network')
     parser.add_argument('--epochs',
-                        default=20,
+                        default=5,
                         dest='epochs',
                         help='No of epochs to run the system for')
     parser.add_argument('--train-val-ratio',
@@ -92,7 +92,7 @@ def path_reader(path):
 
     return fileList
 
-def visualize(filePath):
+def visualize_from_file(filePath):
 
     points = []
     with open(filePath, "r") as file:
