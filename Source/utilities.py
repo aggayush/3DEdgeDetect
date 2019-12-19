@@ -72,7 +72,7 @@ def arg_creator():
                         dest='learningRate',
                         help='Learning rate of the network')
     parser.add_argument('--epochs',
-                        default=5,
+                        default=30,
                         dest='epochs',
                         help='No of epochs to run the system for')
     parser.add_argument('--train-val-ratio',

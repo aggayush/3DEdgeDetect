@@ -9,7 +9,7 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import SobelFilter, MergePointCloud
+from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedBinaryCrossEntropy
 from tensorflow.python.framework.ops import disable_eager_execution
 from Source.utilities import path_reader, visualize_from_file
 
@@ -20,9 +20,9 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 class ThreeDEdgeDetector:
-    VOXEL_GRID_X = 128
-    VOXEL_GRID_Y = 128
-    VOXEL_GRID_Z = 128
+    VOXEL_GRID_X = 32
+    VOXEL_GRID_Y = 32
+    VOXEL_GRID_Z = 32
     DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self, args=None):
@@ -218,12 +218,12 @@ class ThreeDEdgeDetector:
                                   name='output_1',
                                   trainable=False)([edge1, edge2, edge3])
         # layers4 = tfk.layers.Conv3D(2,
-                                    (3, 3, 3),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    kernel_initializer=tf.initializers.glorot_normal,
-                                    name='Conv7')(layers4)
-        outFinal = tfk.layers.Activation(activation='relu')(layers4)
+        #                             (3, 3, 3),
+        #                             strides=(1, 1, 1),
+        #                             padding='same',
+        #                             kernel_initializer=tf.initializers.glorot_normal,
+        #                             name='Conv7')(layers4)
+        outFinal = tfk.layers.Activation(activation='softmax')(layers4)
 
         self.model = tfk.Model(inputs=input, outputs=outFinal)
 
@@ -231,13 +231,15 @@ class ThreeDEdgeDetector:
 
     def train(self):
 
-        opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
-        loss = tfk.losses.MeanSquaredError()
+        opt = tfk.optimizers.Adadelta(learning_rate=self.learningRate)
+        # loss = tfk.losses.BinaryCrossentropy()
+        loss = WeightedBinaryCrossEntropy(0.8, 2)
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
 
-            return loss(y_true=tar, y_pred=tar_)
+            # return loss(y_true=tar, y_pred=tar_)
+            return loss(tar, tar_)
 
         def grad(inp, tar):
             with tf.GradientTape() as tape:
@@ -247,43 +249,58 @@ class ThreeDEdgeDetector:
         for epoch in range(self.epochs):
             epochTrainLossAvg = tfk.metrics.Mean()
             epochTrainAccuracy = tfk.metrics.BinaryAccuracy()
+            epochTrainMIOU = tfk.metrics.MeanIoU(num_classes=2)
 
             epochValLossAvg = tfk.metrics.Mean()
             epochValAccuracy = tfk.metrics.BinaryAccuracy()
+            epochValMIOU = tfk.metrics.MeanIoU(num_classes=2)
 
             for x, c, f in self.trainDataset:
-                pred = self.model(x)
-                lossVal = calc_loss(x, x)
-                epochTrainLossAvg.update_state(lossVal)
-                epochTrainAccuracy.update_state(x, pred)
+                y = x
+                # y = tf.cast(y, tf.bool)
+                # temp1 = tf.logical_not(y)
+                # y = tf.concat([temp1, y], axis=-1)
+                # y = tf.cast(y, tf.float32)
 
-                grads = grad(x, x)
+                pred = self.model(x)
+                lossVal = calc_loss(x, y)
+                epochTrainLossAvg.update_state(lossVal)
+                epochTrainAccuracy.update_state(y, pred)
+                epochTrainMIOU.update_state(y, pred)
+
+                grads = grad(x, y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
             for x, c, f in self.valDataset:
-                lossVal = calc_loss(x, x)
+                y = x
+                # y = tf.cast(y, tf.bool)
+                # temp1 = tf.logical_not(y)
+                # y = tf.concat([temp1, y], axis=-1)
+                # y = tf.cast(y, tf.float32)
+
+                lossVal = calc_loss(x, y)
                 pred = self.model(x)
                 epochValLossAvg.update_state(lossVal)
-                epochValAccuracy.update_state(x, pred)
+                epochValAccuracy.update_state(y, pred)
+                epochValMIOU.update_state(y, pred)
 
-            print("Epoch {:03d}: Train_Loss: {:.3f}, Train_Accuracy: {:.3%}, "
-                  "Val_Loss: {:.3f}, Val_Accuracy: {:.3%},".format(epoch,
-                                                                   epochTrainLossAvg.result(),
-                                                                   epochTrainAccuracy.result(),
-                                                                   epochValLossAvg.result(),
-                                                                   epochValAccuracy.result()))
+            print("Epoch {:03d}: Train_Loss: {:.3f}, Train_Accuracy: {:.3%}, Train_MIOU: {:.3f}, "
+                  "Val_Loss: {:.3f}, Val_Accuracy: {:.3%}, Train_MIOU: {:.3f}".format(epoch,
+                                                                                      epochTrainLossAvg.result(),
+                                                                                      epochTrainAccuracy.result(),
+                                                                                      epochTrainMIOU.result(),
+                                                                                      epochValLossAvg.result(),
+                                                                                      epochValAccuracy.result(),
+                                                                                      epochValMIOU.result()))
 
     def test(self):
 
         for x, c, f in self.testDataset:
             pred = self.model(x)
             pred = pred.numpy()
-            pred = np.squeeze(pred, axis=-1)
-            pred = np.squeeze(pred, axis=0)
+            pred = pred[0, :, :, :, 0]
             indexX, indexY, indexZ = np.where(pred > 0.2)
-            pointsX = indexX - self.VOXEL_GRID_X/2
-
-
+            pointsX = indexX - self.VOXEL_GRID_X / 2
 
     def run(self):
 
