@@ -23,7 +23,7 @@ class MergePointCloud(tfk.layers.Layer):
 
         # processing for creating all permutation and combinations
         voxelX = tf.expand_dims(voxelX, 1)
-        voxelX = tf.tile(voxelX, [1, shape[1]*shape[2]])
+        voxelX = tf.tile(voxelX, [1, shape[1] * shape[2]])
         voxelX = tf.reshape(voxelX, [-1])
 
         voxelY = tf.expand_dims(voxelY, 0)
@@ -31,7 +31,7 @@ class MergePointCloud(tfk.layers.Layer):
         voxelY = tf.tile(voxelY, [shape[0], 1, shape[2]])
         voxelY = tf.reshape(voxelY, [-1])
 
-        voxelZ = tf.tile(voxelZ, [shape[0]*shape[1]])
+        voxelZ = tf.tile(voxelZ, [shape[0] * shape[1]])
 
         return voxelX, voxelY, voxelZ
 
@@ -52,12 +52,12 @@ class MergePointCloud(tfk.layers.Layer):
         voxelZ = tf.cast(voxelZ, tf.float64)
 
         # transforming given indexes to new grid indexes
-        voxelX = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelX, 2*self.outputSize[0]), self.outputSize[0]),
-                                                 tf.cast(tf.multiply(2, shape[1]), tf.float64))), tf.int32)
-        voxelY = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelY, 2*self.outputSize[1]), self.outputSize[1]),
-                                                 tf.cast(tf.multiply(2, shape[2]), tf.float64))), tf.int32)
-        voxelZ = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelZ, 2*self.outputSize[2]), self.outputSize[2]),
-                                                 tf.cast(tf.multiply(2, shape[3]), tf.float64))), tf.int32)
+        voxelX = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelX, 2 * self.outputSize[0]), self.outputSize[0]),
+                                            tf.cast(tf.multiply(2, shape[1]), tf.float64))), tf.int32)
+        voxelY = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelY, 2 * self.outputSize[1]), self.outputSize[1]),
+                                            tf.cast(tf.multiply(2, shape[2]), tf.float64))), tf.int32)
+        voxelZ = tf.cast(tf.floor(tf.divide(tf.add(tf.multiply(voxelZ, 2 * self.outputSize[2]), self.outputSize[2]),
+                                            tf.cast(tf.multiply(2, shape[3]), tf.float64))), tf.int32)
 
         batchAxis = tf.range(shape[0])
         batchAxis = tf.expand_dims(batchAxis, axis=1)
@@ -107,6 +107,7 @@ class MergePointCloud(tfk.layers.Layer):
         finalVoxelGrid = tf.expand_dims(finalVoxelGrid, axis=-1)
 
         return finalVoxelGrid
+
 
 class SobelFilter(tfk.layers.Layer):
     def __init__(self, **kwargs):
@@ -162,12 +163,14 @@ class SobelFilter(tfk.layers.Layer):
                 [-1., 0., 1.]
             ]
         ])
-        self.convX = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelX, name='Sobel_ConvX')
-        self.convY = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelY, name='Sobel_ConvY')
-        self.convZ = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelZ, name='Sobel_ConvZ')
+        self.convX = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelX,
+                                       name='Sobel_ConvX')
+        self.convY = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelY,
+                                       name='Sobel_ConvY')
+        self.convZ = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelZ,
+                                       name='Sobel_ConvZ')
 
     def call(self, input):
-
         x = self.convX(input)
         y = self.convY(input)
         z = self.convZ(input)
@@ -177,39 +180,41 @@ class SobelFilter(tfk.layers.Layer):
         return mag
 
 
-class WeightedBinaryCrossEntropy(tfk.losses.Loss):
-    """
-    Args:
-      pos_weight: Scalar to affect the positive labels of the loss function.
-      weight: Scalar to affect the entirety of the loss function.
-      from_logits: Whether to compute loss form logits or the probability.
-      reduction: Type of tf.keras.losses.Reduction to apply to loss.
-      name: Name of the loss function.
-    """
-    def __init__(self, pos_weight, weight, from_logits=False,
+class WeightedLoss(tfk.losses.Loss):
+
+    def __init__(self, pos_weight, weight, num_classes=2,
                  reduction=tfk.losses.Reduction.AUTO,
                  name='weighted_binary_crossentropy'):
-        super(WeightedBinaryCrossEntropy, self).__init__(reduction=reduction,
-                                                         name=name)
+        super(WeightedLoss, self).__init__(reduction=reduction,
+                                           name=name)
         self.pos_weight = pos_weight
         self.weight = weight
-        self.from_logits = from_logits
+        self.num_classes = num_classes
+
+    def weighted_binary_cross_entropy(self, y_true, y_pred):
+        y_true = tf.reshape(y_true, [-1, self.num_classes])
+        y_pred = tf.reshape(y_pred, [-1, self.num_classes])
+
+        # Manually calculate the weighted cross entropy.
+        # Formula is qz * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        # where z are labels, x is logits, and q is the weight.
+        # Since the values passed are from sigmoid (assuming in this case)
+        # sigmoid(x) will be replaced by y_pred
+
+        # qz * -log(sigmoid(x)) 1e-6 is added as an epsilon to stop passing a zero into the log
+        x_1 = y_true * self.pos_weight * -tf.math.log(y_pred + 1e-6)
+
+        # (1 - z) * -log(1 - sigmoid(x)). Epsilon is added to prevent passing a zero into the log
+        x_2 = (1 - y_true) * -tf.math.log(1 - y_pred + 1e-6)
+
+        return tf.add(x_1, x_2) * self.weight
+
+    def softmax_cross_entropy(self, y_true, y_pred):
+        y_true = tf.reshape(y_true, [-1, self.num_classes])
+        y_pred = tf.reshape(y_pred, [-1, self.num_classes])
+
+        return tf.nn.softmax_cross_entropy_with_logits(y_true, y_pred)
 
     def call(self, y_true, y_pred):
-        if not self.from_logits:
-            # Manually calculate the weighted cross entropy.
-            # Formula is qz * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
-            # where z are labels, x is logits, and q is the weight.
-            # Since the values passed are from sigmoid (assuming in this case)
-            # sigmoid(x) will be replaced by y_pred
-
-            # qz * -log(sigmoid(x)) 1e-6 is added as an epsilon to stop passing a zero into the log
-            x_1 = y_true * self.pos_weight * -tf.math.log(y_pred + 1e-6)
-
-            # (1 - z) * -log(1 - sigmoid(x)). Epsilon is added to prevent passing a zero into the log
-            x_2 = (1 - y_true) * -tf.math.log(1 - y_pred + 1e-6)
-
-            return tf.add(x_1, x_2) * self.weight
-
-        # Use built in function
-        return tf.nn.weighted_cross_entropy_with_logits(y_true, y_pred, self.pos_weight) * self.weight
+        return self.weighted_binary_cross_entropy(y_true, y_pred)
+        # return self.softmax_cross_entropy(y_true, y_pred)

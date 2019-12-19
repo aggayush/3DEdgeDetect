@@ -92,6 +92,7 @@ def path_reader(path):
 
     return fileList
 
+
 def visualize_from_file(filePath):
 
     points = []
@@ -99,6 +100,10 @@ def visualize_from_file(filePath):
         for line in file:
             tokens = line.split()
             points.append(list(map(float, tokens)))
+    visualize_point_cloud(points)
+
+
+def visualize_point_cloud(points):
     pcd = open3d.geometry.PointCloud()
     pcd.points = open3d.utility.Vector3dVector(np.array(points))
     open3d.visualization.draw_geometries([pcd])

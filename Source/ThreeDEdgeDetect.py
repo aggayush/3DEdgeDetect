@@ -9,9 +9,9 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedBinaryCrossEntropy
+from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss
 from tensorflow.python.framework.ops import disable_eager_execution
-from Source.utilities import path_reader, visualize_from_file
+from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -158,16 +158,13 @@ class ThreeDEdgeDetector:
                                     strides=(1, 1, 1),
                                     activation=self.activation,
                                     input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
-                                    kernel_initializer=tf.initializers.glorot_normal,
                                     name='Conv1')(input)
         # layers1 = tfk.layers.BatchNormalization()(layers1)
-        layers1 = tfk.layers.Dropout(self.dropoutRate)(layers1)
-        layers1 = tfk.layers.Conv3D(1,
-                                    (3, 3, 3),
-                                    strides=(2, 2, 2),
-                                    padding='same',
-                                    activation=self.activation,
-                                    name='Conv2')(layers1)
+        # layers1 = tfk.layers.Dropout(self.dropoutRate)(layers1)
+        layers1 = tfk.layers.MaxPool3D((3, 3, 3),
+                                       strides=(1, 1, 1),
+                                       padding='same',
+                                       name='MaxPool1')(layers1)
         # layers1 = tfk.layers.BatchNormalization()(layers1)
         layers1 = tfk.layers.Dropout(self.dropoutRate)(layers1)
         edge1 = SobelFilter(name='edge_1', trainable=False)(layers1)
@@ -175,20 +172,16 @@ class ThreeDEdgeDetector:
 
         layers2 = tfk.layers.Conv3D(64,
                                     (3, 3, 3),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    activation=self.activation,
-                                    kernel_initializer=tf.initializers.glorot_normal,
-                                    name='Conv3')(layers1)
-        # layers2 = tfk.layers.BatchNormalization()(layers2)
-        layers2 = tfk.layers.Dropout(self.dropoutRate)(layers2)
-        layers2 = tfk.layers.Conv3D(1,
-                                    (3, 3, 3),
                                     strides=(2, 2, 2),
                                     padding='same',
                                     activation=self.activation,
-                                    kernel_initializer=tf.initializers.glorot_normal,
-                                    name='Conv4')(layers2)
+                                    name='Conv2')(layers1)
+        # layers2 = tfk.layers.BatchNormalization()(layers2)
+        # layers2 = tfk.layers.Dropout(self.dropoutRate)(layers2)
+        layers2 = tfk.layers.MaxPool3D((3, 3, 3),
+                                       strides=(1, 1, 1),
+                                       padding='same',
+                                       name='MaxPool2')(layers2)
         # layers2 = tfk.layers.BatchNormalization()(layers2)
         layers2 = tfk.layers.Dropout(self.dropoutRate)(layers2)
         edge2 = SobelFilter(name='edge_2', trainable=False)(layers2)
@@ -196,34 +189,28 @@ class ThreeDEdgeDetector:
 
         layers3 = tfk.layers.Conv3D(64,
                                     (3, 3, 3),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    activation=self.activation,
-                                    kernel_initializer=tf.initializers.glorot_normal,
-                                    name='Conv5')(layers2)
-        # layers3 = tfk.layers.BatchNormalization()(layers3)
-        layers3 = tfk.layers.Dropout(self.dropoutRate)(layers3)
-        layers3 = tfk.layers.Conv3D(1,
-                                    (3, 3, 3),
                                     strides=(2, 2, 2),
                                     padding='same',
                                     activation=self.activation,
-                                    kernel_initializer=tf.initializers.glorot_normal,
-                                    name='Conv6')(layers3)
+                                    name='Conv3')(layers2)
+        # layers3 = tfk.layers.BatchNormalization()(layers3)
+        layers3 = tfk.layers.Dropout(self.dropoutRate)(layers3)
+        layers3 = tfk.layers.MaxPool3D((3, 3, 3),
+                                       strides=(1, 1, 1),
+                                       padding='same',
+                                       name='MaxPool3')(layers3)
         # layers3 = tfk.layers.BatchNormalization()(layers3)
         layers3 = tfk.layers.Dropout(self.dropoutRate)(layers3)
         edge3 = SobelFilter(name='edge_3', trainable=False)(layers3)
         layers4 = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
                                   'avg',
                                   name='output_1',
-                                  trainable=False)([edge1, edge2, edge3])
-        # layers4 = tfk.layers.Conv3D(2,
-        #                             (3, 3, 3),
-        #                             strides=(1, 1, 1),
-        #                             padding='same',
-        #                             kernel_initializer=tf.initializers.glorot_normal,
-        #                             name='Conv7')(layers4)
-        outFinal = tfk.layers.Activation(activation='softmax')(layers4)
+                                  trainable=True)([edge1, edge2, edge3])
+        layers4 = tfk.layers.MaxPool3D((3, 3, 3),
+                                       strides=(1, 1, 1),
+                                       padding='same',
+                                       name='MaxPool4')(layers4)
+        outFinal = tfk.layers.Activation(activation='sigmoid')(layers4)
 
         self.model = tfk.Model(inputs=input, outputs=outFinal)
 
@@ -231,14 +218,12 @@ class ThreeDEdgeDetector:
 
     def train(self):
 
-        opt = tfk.optimizers.Adadelta(learning_rate=self.learningRate)
-        # loss = tfk.losses.BinaryCrossentropy()
-        loss = WeightedBinaryCrossEntropy(0.8, 2)
+        opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
+        loss = WeightedLoss(20, 2, num_classes=1)
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
 
-            # return loss(y_true=tar, y_pred=tar_)
             return loss(tar, tar_)
 
         def grad(inp, tar):
@@ -250,10 +235,12 @@ class ThreeDEdgeDetector:
             epochTrainLossAvg = tfk.metrics.Mean()
             epochTrainAccuracy = tfk.metrics.BinaryAccuracy()
             epochTrainMIOU = tfk.metrics.MeanIoU(num_classes=2)
+            epochTrainMSE = tfk.metrics.MeanSquaredError()
 
             epochValLossAvg = tfk.metrics.Mean()
             epochValAccuracy = tfk.metrics.BinaryAccuracy()
             epochValMIOU = tfk.metrics.MeanIoU(num_classes=2)
+            epochValMSE = tfk.metrics.MeanSquaredError()
 
             for x, c, f in self.trainDataset:
                 y = x
@@ -262,14 +249,15 @@ class ThreeDEdgeDetector:
                 # y = tf.concat([temp1, y], axis=-1)
                 # y = tf.cast(y, tf.float32)
 
+                grads = grad(x, y)
+                opt.apply_gradients(zip(grads, self.model.trainable_variables))
+
                 pred = self.model(x)
                 lossVal = calc_loss(x, y)
                 epochTrainLossAvg.update_state(lossVal)
                 epochTrainAccuracy.update_state(y, pred)
                 epochTrainMIOU.update_state(y, pred)
-
-                grads = grad(x, y)
-                opt.apply_gradients(zip(grads, self.model.trainable_variables))
+                epochTrainMSE.update_state(y, pred)
 
             for x, c, f in self.valDataset:
                 y = x
@@ -283,15 +271,18 @@ class ThreeDEdgeDetector:
                 epochValLossAvg.update_state(lossVal)
                 epochValAccuracy.update_state(y, pred)
                 epochValMIOU.update_state(y, pred)
+                epochValMSE.update_state(y, pred)
 
-            print("Epoch {:03d}: Train_Loss: {:.3f}, Train_Accuracy: {:.3%}, Train_MIOU: {:.3f}, "
-                  "Val_Loss: {:.3f}, Val_Accuracy: {:.3%}, Train_MIOU: {:.3f}".format(epoch,
-                                                                                      epochTrainLossAvg.result(),
-                                                                                      epochTrainAccuracy.result(),
-                                                                                      epochTrainMIOU.result(),
-                                                                                      epochValLossAvg.result(),
-                                                                                      epochValAccuracy.result(),
-                                                                                      epochValMIOU.result()))
+            print("Epoch {:03d}: Train_Loss: {:.3f}, Train_Accuracy: {:.3%}, Train_MIOU: {:.3f}, Train_MSE: {:.3f}, "
+                  "Val_Loss: {:.3f}, Val_Accuracy: {:.3%}, Val_MIOU: {:.3f}, Val_MSE: {:.3f}".format(epoch,
+                                                                                                     epochTrainLossAvg.result(),
+                                                                                                     epochTrainAccuracy.result(),
+                                                                                                     epochTrainMIOU.result(),
+                                                                                                     epochTrainMSE.result(),
+                                                                                                     epochValLossAvg.result(),
+                                                                                                     epochValAccuracy.result(),
+                                                                                                     epochValMIOU.result(),
+                                                                                                     epochValMSE.result()))
 
     def test(self):
 
@@ -299,8 +290,12 @@ class ThreeDEdgeDetector:
             pred = self.model(x)
             pred = pred.numpy()
             pred = pred[0, :, :, :, 0]
-            indexX, indexY, indexZ = np.where(pred > 0.2)
-            pointsX = indexX - self.VOXEL_GRID_X / 2
+            indexX, indexY, indexZ = np.where(pred > 0.5)
+            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            visualize_point_cloud(pointCloud)
 
     def run(self):
 
