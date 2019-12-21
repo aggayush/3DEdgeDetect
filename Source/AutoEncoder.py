@@ -9,15 +9,16 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
+from Source.CustamLayer import WeightedLoss
 from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 class AutoEncoder:
-    VOXEL_GRID_X = 128
-    VOXEL_GRID_Y = 128
-    VOXEL_GRID_Z = 128
+    VOXEL_GRID_X = 32
+    VOXEL_GRID_Y = 32
+    VOXEL_GRID_Z = 32
     DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self, args=None):
@@ -90,7 +91,7 @@ class AutoEncoder:
         sparseValues = tf.ones([shape[0]], tf.float32)
         delta = tf.sparse.SparseTensor(indices=indexes, values=sparseValues,
                                        dense_shape=[self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z])
-        grid = tf.math.add(grid, tf.sparse.to_dense(delta, default_value=-1.0, validate_indices=False))
+        grid = tf.math.add(grid, tf.sparse.to_dense(delta, default_value=0.0, validate_indices=False))
         grid = tf.expand_dims(grid, -1)
 
         return grid, centroid, furthestDistanceFromCentre
@@ -120,7 +121,7 @@ class AutoEncoder:
         self.trainDataset = self.trainDataset.batch(self.batchSize)
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
 
-        self.valDataset = self.valDataset.batch(1)
+        self.valDataset = self.valDataset.batch(self.batchSize)
         self.valDataset = self.valDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
@@ -143,6 +144,13 @@ class AutoEncoder:
             self.model.load_weights(file)
         else:
             print('Pre-trained Model not exists. using default weights!!')
+
+    def save_weights(self, filename=None):
+        if filename is None:
+            filename = self.modelName
+
+        file = os.path.join(self.modelPath, filename)
+        self.model.save_weights(file)
 
     def create_model(self):
 
@@ -185,7 +193,7 @@ class AutoEncoder:
         outFinal = tfk.layers.Conv3D(1,
                                      (3, 3, 3),
                                      padding='same',
-                                     activation='tanh',
+                                     activation='sigmoid',
                                      name='FinalOut')(layers)
 
         self.model = tfk.Model(inputs=input, outputs=outFinal)
@@ -194,8 +202,8 @@ class AutoEncoder:
 
     def train(self):
 
-        opt = tfk.optimizers.Adam(learning_rate=self.learningRate)
-        loss = tfk.losses.MeanSquaredError()
+        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, clipvalue=10.0)
+        loss = WeightedLoss(4, 2, 1)
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
@@ -227,14 +235,16 @@ class AutoEncoder:
             for x, c, f in self.valDataset:
                 y = x
 
+                # pred = self.model(x)
                 lossVal = calc_loss(x, y)
-                pred = self.model(x)
                 epochValLossAvg.update_state(lossVal)
 
             print("Epoch {:03d}: Train_Loss: {:.8f}, "
                   "Val_Loss: {:.8f}".format(epoch,
                                             epochTrainLossAvg.result(),
                                             epochValLossAvg.result()))
+
+            self.save_weights()
 
     def test(self):
 
