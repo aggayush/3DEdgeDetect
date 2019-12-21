@@ -163,12 +163,13 @@ class SobelFilter(tfk.layers.Layer):
                 [-1., 0., 1.]
             ]
         ])
+        bias = tfk.initializers.Constant([0])
         self.convX = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelX,
-                                       name='Sobel_ConvX')
+                                       bias_initializer=bias, name='Sobel_ConvX')
         self.convY = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelY,
-                                       name='Sobel_ConvY')
+                                       bias_initializer=bias, name='Sobel_ConvY')
         self.convZ = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelZ,
-                                       name='Sobel_ConvZ')
+                                       bias_initializer=bias, name='Sobel_ConvZ')
 
     def call(self, input):
         x = self.convX(input)
@@ -215,6 +216,22 @@ class WeightedLoss(tfk.losses.Loss):
 
         return tf.nn.softmax_cross_entropy_with_logits(y_true, y_pred)
 
+    def weighted_mean_square_error(self, y_true, y_pred):
+        y_true = tf.reshape(y_true, [-1,])
+        y_pred = tf.reshape(y_pred, [-1,])
+
+        pos_idx = tf.where(y_true == 1.0)
+        neg_idx = tf.where(y_true == 0.0)
+
+        pos_idx = tf.reshape(pos_idx, [-1,])
+        neg_idx = tf.reshape(neg_idx, [-1,])
+
+        pos_mse = tf.reduce_mean(tf.multiply(tf.square(tf.gather(y_true, pos_idx) - tf.gather(y_pred, pos_idx)), self.pos_weight))
+        neg_mse = tf.reduce_mean(tf.square(tf.gather(y_true, neg_idx) - tf.gather(y_pred, neg_idx))) * self.weight
+
+        return tf.add(pos_mse, neg_mse)
+
     def call(self, y_true, y_pred):
-        return self.weighted_binary_cross_entropy(y_true, y_pred)
+        # return self.weighted_binary_cross_entropy(y_true, y_pred)
         # return self.softmax_cross_entropy(y_true, y_pred)
+        return self.weighted_mean_square_error(y_true, y_pred)
