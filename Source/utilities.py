@@ -63,12 +63,12 @@ def arg_creator():
                         dest='dropoutRate',
                         help='Dropout rate for the dropout layers')
     parser.add_argument('--use-pretrained',
-                        default=False,
+                        default=True,
                         action='store_true',
                         dest='usePreTrained',
                         help='To use pretrained weights or not')
     parser.add_argument('--learning-rate',
-                        default=0.01,
+                        default=0.001,
                         dest='learningRate',
                         help='Learning rate of the network')
     parser.add_argument('--epochs',

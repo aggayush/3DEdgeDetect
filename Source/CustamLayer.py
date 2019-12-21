@@ -223,8 +223,8 @@ class WeightedLoss(tfk.losses.Loss):
         pos_idx = tf.where(y_true == 1.0)
         neg_idx = tf.where(y_true == 0.0)
 
-        pos_idx = tf.reshape(pos_idx, [-1,])
-        neg_idx = tf.reshape(neg_idx, [-1,])
+        pos_idx = tf.reshape(pos_idx, [-1, ])
+        neg_idx = tf.reshape(neg_idx, [-1, ])
 
         pos_mse = tf.reduce_mean(tf.multiply(tf.square(tf.gather(y_true, pos_idx) - tf.gather(y_pred, pos_idx)), self.pos_weight))
         neg_mse = tf.reduce_mean(tf.square(tf.gather(y_true, neg_idx) - tf.gather(y_pred, neg_idx))) * self.weight
