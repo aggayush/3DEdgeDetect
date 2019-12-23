@@ -9,7 +9,7 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss
+from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, ClusteringLayer
 from tensorflow.python.framework.ops import disable_eager_execution
 from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud
 
@@ -32,17 +32,17 @@ class ThreeDEdgeDetector:
             self.outputPath = './Output/'
             self.modelPath = './Model/'
             self.logDir = './log/'
-            self.modelName = 'depth_model.h5'
-            self.isTrain = False
+            self.modelName = 'edge_model.h5'
+            self.encoderModelName = 'encoder_decoder.h5'
+            self.isTrain = True
             self.isStreamed = False
-            self.usePreTrained = False
-            self.batchSize = 2
+            self.usePreTrained = True
+            self.batchSize = 20
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
             self.learningRate = 0.001
-            self.epochs = 20
-            self.trainValRatio = 0.2
+            self.epochs = 50
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -59,8 +59,7 @@ class ThreeDEdgeDetector:
             self.dropoutRate = args.dropoutRate
             self.learningRate = args.learningRate
             self.epochs = args.epochs
-            self.trainValRatio = args.trainValRatio
-        self.prefetchBufferSize = 10
+        self.prefetchBufferSize = 100
         self.trainDataset = None
         self.testDataset = None
         self.model = None
@@ -113,20 +112,13 @@ class ThreeDEdgeDetector:
 
         trainPath = os.path.join(trainPath, '*.xyz')
         testPath = os.path.join(testPath, '*.xyz')
-        numElements = len(glob.glob(trainPath))
         trainFilesDs = tf.data.Dataset.list_files(trainPath)
         testFilesDs = tf.data.Dataset.list_files(testPath)
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
-        self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
-        self.valDataset = self.trainDataset.take(math.ceil(self.trainValRatio * numElements))
-
-        self.trainDataset = self.trainDataset.skip(math.ceil(self.trainValRatio * numElements))
+        # self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
         self.trainDataset = self.trainDataset.batch(self.batchSize)
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
-
-        self.valDataset = self.valDataset.batch(1)
-        self.valDataset = self.valDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
@@ -144,8 +136,13 @@ class ThreeDEdgeDetector:
     def load_weights(self):
 
         file = os.path.join(self.modelPath, self.modelName)
+        encoderFile = os.path.join(self.modelPath, self.encoderModelName)
         if os.path.exists(file):
             self.model.load_weights(file)
+            print("Loaded complete pre-trained model")
+        elif os.path.exists(encoderFile):
+            self.model.load_weights(encoderFile, by_name=True)
+            print("Loaded encoder model only")
         else:
             print('Pre-trained Model not exists. using default weights!!')
 
@@ -157,7 +154,6 @@ class ThreeDEdgeDetector:
 
         self.model.save_weights(file)
 
-
     def create_model(self):
 
         input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1))
@@ -168,27 +164,28 @@ class ThreeDEdgeDetector:
                                     strides=(1, 1, 1),
                                     activation=self.activation,
                                     input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
-                                    name='Encoder_Conv1')(input)
+                                    name='Conv1')(input)
 
         branch1 = tfk.layers.Conv3D(1,
                                     (1, 1, 1),
                                     strides=(1, 1, 1),
                                     padding='same',
                                     name='Branch1_Conv1')(layers1)
+        branch1 = tfk.layers.Activation(activation='sigmoid')(branch1)
         branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(branch1)
         branch1 = tfk.layers.Activation(activation=self.activation, name='Branch1_Act')(branch1)
 
         layers1 = tfk.layers.MaxPool3D((3, 3, 3),
                                        strides=(1, 1, 1),
                                        padding='same',
-                                       name='Encoder_MaxPool1')(layers1)
+                                       name='MaxPool1')(layers1)
 
         layers2 = tfk.layers.Conv3D(64,
                                     (3, 3, 3),
                                     strides=(2, 2, 2),
                                     padding='same',
                                     activation=self.activation,
-                                    name='Encoder_Conv2')(layers1)
+                                    name='Conv2')(layers1)
 
         branch2 = tfk.layers.Conv3D(1,
                                     (1, 1, 1),
@@ -200,20 +197,21 @@ class ThreeDEdgeDetector:
                                              strides=(2, 2, 2),
                                              padding='same',
                                              name='Branch2_DeConv1')(branch2)
+        branch2 = tfk.layers.Activation(activation='sigmoid')(branch2)
         branch2 = SobelFilter(name='Branch2_Sobel1', trainable=False)(branch2)
         branch2 = tfk.layers.Activation(activation=self.activation, name='Branch2_Act')(branch2)
 
         layers2 = tfk.layers.MaxPool3D((3, 3, 3),
                                        strides=(1, 1, 1),
                                        padding='same',
-                                       name='Encoder_MaxPool2')(layers2)
+                                       name='MaxPool2')(layers2)
 
         layers3 = tfk.layers.Conv3D(64,
                                     (3, 3, 3),
                                     strides=(2, 2, 2),
                                     padding='same',
                                     activation=self.activation,
-                                    name='Encoder_Conv3')(layers2)
+                                    name='Conv3')(layers2)
 
         branch3 = tfk.layers.Conv3D(1,
                                     (1, 1, 1),
@@ -225,19 +223,12 @@ class ThreeDEdgeDetector:
                                              strides=(4, 4, 4),
                                              padding='same',
                                              name='Branch3_DeConv1')(branch3)
+        branch3 = tfk.layers.Activation(activation='sigmoid')(branch3)
         branch3 = SobelFilter(name='Branch3_Sobel1', trainable=False)(branch3)
         branch3 = tfk.layers.Activation(activation=self.activation, name='Branch3_Act')(branch3)
 
-        layers4 = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
-                                  'avg',
-                                  name='output_1',
-                                  trainable=True)([branch1, branch2, branch3])
-
-        # layers4 = tfk.layers.MaxPool3D((3, 3, 3),
-        #                                strides=(1, 1, 1),
-        #                                padding='same',
-        #                                name='MaxPool1')(branch1)
-        outFinal = tfk.layers.Activation(activation='sigmoid')(layers4)
+        layers4 = tfk.layers.Average()([branch1, branch2, branch3])
+        outFinal = ClusteringLayer()(layers4)
 
         self.model = tfk.Model(inputs=input, outputs=outFinal)
 
@@ -246,7 +237,7 @@ class ThreeDEdgeDetector:
     def train(self):
 
         opt = tfk.optimizers.Adam(learning_rate=self.learningRate, clipvalue=10.0)
-        loss = WeightedLoss(4, 2, 1)
+        loss = tfk.losses.KLDivergence()
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
@@ -258,72 +249,78 @@ class ThreeDEdgeDetector:
                 loss_value = calc_loss(inp, tar)
             return tape.gradient(loss_value, self.model.trainable_variables)
 
+        def update_target_distribution(q):
+            freq = tf.reduce_sum(tf.reshape(q, (-1, 2)), axis=0)
+            weight = tf.divide(tf.square(q), freq)
+            weight = tf.divide(weight, tf.expand_dims(tf.reduce_sum(weight, axis=-1), axis=-1))
+
+            return weight
+
         for epoch in range(self.epochs):
             epochTrainLossAvg = tfk.metrics.Mean()
-            epochTrainAccuracy = tfk.metrics.BinaryAccuracy()
-            epochTrainMIOU = tfk.metrics.MeanIoU(num_classes=2)
-            epochTrainMSE = tfk.metrics.MeanSquaredError()
 
             epochValLossAvg = tfk.metrics.Mean()
-            epochValAccuracy = tfk.metrics.BinaryAccuracy()
-            epochValMIOU = tfk.metrics.MeanIoU(num_classes=2)
-            epochValMSE = tfk.metrics.MeanSquaredError()
+
+            whole_pred = None
+            # updating the target distribution
+            for x, c, f in self.trainDataset:
+                p = self.model(x)
+                if whole_pred is None:
+                    whole_pred = p
+                else:
+                    whole_pred = tf.concat([whole_pred, p], axis=0)
+
+            y = update_target_distribution(whole_pred)
+
+            predDataset = tf.data.Dataset.from_tensor_slices(y)
+            predDataset = predDataset.batch(self.batchSize)
+            predDataset = predDataset.prefetch(self.prefetchBufferSize)
+
+            finalDataset = tf.data.Dataset.zip((self.trainDataset, predDataset))
 
             iteration = 0
-
-            for x, c, f in self.trainDataset:
-                y = x
-                # y = tf.cast(y, tf.bool)
-                # temp1 = tf.logical_not(y)
-                # y = tf.concat([temp1, y], axis=-1)
-                # y = tf.cast(y, tf.float32)
-
-                grads = grad(x, y)
+            for x, y in finalDataset:
+                grads = grad(x[0], y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
-                pred = self.model(x)
-                lossVal = calc_loss(x, y)
+                lossVal = calc_loss(x[0], y)
                 epochTrainLossAvg.update_state(lossVal)
-                epochTrainAccuracy.update_state(y, pred)
-                epochTrainMIOU.update_state(y, pred)
-                epochTrainMSE.update_state(y, pred)
 
                 print("iter {:04d}: Train_loss: {:.8f}".format(iteration, lossVal))
-                iteration=iteration+1
+                iteration = iteration + 1
 
-            for x, c, f in self.testDataset:
-                y = x
-                # y = tf.cast(y, tf.bool)
-                # temp1 = tf.logical_not(y)
-                # y = tf.concat([temp1, y], axis=-1)
-                # y = tf.cast(y, tf.float32)
+            del predDataset
+            del finalDataset
+            del y
+            del whole_pred
 
-                lossVal = calc_loss(x, y)
-                pred = self.model(x)
-                epochValLossAvg.update_state(lossVal)
-                epochValAccuracy.update_state(y, pred)
-                epochValMIOU.update_state(y, pred)
-                epochValMSE.update_state(y, pred)
+            # for x, c, f in self.testDataset:
+            #     lossVal = calc_loss(x, y)
+            #     epochValLossAvg.update_state(lossVal)
 
-            print("Epoch {:03d}: Train_Loss: {:.3f}, Train_Accuracy: {:.3%}, Train_MIOU: {:.3f}, Train_MSE: {:.3f}, "
-                  "Val_Loss: {:.3f}, Val_Accuracy: {:.3%}, Val_MIOU: {:.3f}, Val_MSE: {:.3f}".format(epoch,
-                                                                                                     epochTrainLossAvg.result(),
-                                                                                                     epochTrainAccuracy.result(),
-                                                                                                     epochTrainMIOU.result(),
-                                                                                                     epochTrainMSE.result(),
-                                                                                                     epochValLossAvg.result(),
-                                                                                                     epochValAccuracy.result(),
-                                                                                                     epochValMIOU.result(),
-                                                                                                     epochValMSE.result()))
+            # self.predict()
 
-            self.save_weights()
+            print("Epoch {:03d}: Train_Loss: {:.8f}".format(epoch,
+                                                            epochTrainLossAvg.result()))
 
-    def test(self):
+            self.save_weights(str(epoch) + '.h5')
+
+    def predict(self):
 
         for x, c, f in self.testDataset:
+            inp = x.numpy()
+            inp = inp[0, :, :, :, 0]
+            indexX, indexY, indexZ = np.where(inp > 0.5)
+            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            visualize_point_cloud(pointCloud)
             pred = self.model(x)
             pred = pred.numpy()
-            pred = pred[0, :, :, :, 0]
+            pred = pred[0, :, :, :, :]
+            pred = np.argmax(pred, axis=-1)
+            # pred = 1 - pred
             indexX, indexY, indexZ = np.where(pred > 0.5)
             pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
@@ -344,15 +341,25 @@ class ThreeDEdgeDetector:
 
         self.create_model()
 
-        # data = next(iter(self.trainDataset))
-        # out = self.model(data[0])
-        # out = out.numpy()
-
         if self.usePreTrained:
             self.load_weights()
 
+        # data = next(iter(self.testDataset))
+        # out = self.model(data[0])
+        # out = out.numpy()
+        # out = out[0, :, :, :, :]
+        # out = np.argmax(out, axis=-1)
+        # inp = np.abs(inp)
+        # indexX, indexY, indexZ = np.where(inp > 0.5)
+        # inp[indexX, indexY, indexZ] = 0
+        # indexX, indexY, indexZ = np.where(inp > 0)
+        # pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+        # pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+        # pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+        # pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+        # visualize_point_cloud(pointCloud)
+
         if self.isTrain:
             self.train()
-            self.test()
         else:
             self.predict()

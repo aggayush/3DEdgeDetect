@@ -11,5 +11,6 @@ from Source.AutoEncoder import AutoEncoder
 if __name__ == "__main__":
     arguments = arg_creator()
     parsed_args = arguments.parse_args()
-    detector = AutoEncoder(parsed_args)
+    # detector = AutoEncoder()
+    detector = ThreeDEdgeDetector()
     detector.run()

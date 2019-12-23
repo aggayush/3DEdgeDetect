@@ -28,17 +28,16 @@ class AutoEncoder:
             self.outputPath = './Output/'
             self.modelPath = './Model/'
             self.logDir = './log/'
-            self.modelName = 'depth_model.h5'
+            self.modelName = 'encoder_decoder.h5'
             self.isTrain = False
             self.isStreamed = False
-            self.usePreTrained = False
-            self.batchSize = 2
+            self.usePreTrained = True
+            self.batchSize = 40
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
             self.learningRate = 0.001
-            self.epochs = 20
-            self.trainValRatio = 0.2
+            self.epochs = 30
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -55,8 +54,7 @@ class AutoEncoder:
             self.dropoutRate = args.dropoutRate
             self.learningRate = args.learningRate
             self.epochs = args.epochs
-            self.trainValRatio = args.trainValRatio
-        self.prefetchBufferSize = 10
+        self.prefetchBufferSize = 100
         self.trainDataset = None
         self.testDataset = None
         self.model = None
@@ -109,20 +107,13 @@ class AutoEncoder:
 
         trainPath = os.path.join(trainPath, '*.xyz')
         testPath = os.path.join(testPath, '*.xyz')
-        numElements = len(glob.glob(trainPath))
         trainFilesDs = tf.data.Dataset.list_files(trainPath)
         testFilesDs = tf.data.Dataset.list_files(testPath)
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
-        self.valDataset = self.trainDataset.take(math.ceil(self.trainValRatio * numElements))
-
-        self.trainDataset = self.trainDataset.skip(math.ceil(self.trainValRatio * numElements))
         self.trainDataset = self.trainDataset.batch(self.batchSize)
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
-
-        self.valDataset = self.valDataset.batch(self.batchSize)
-        self.valDataset = self.valDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
@@ -222,20 +213,16 @@ class AutoEncoder:
             iteration = 0
             for x, c, f in self.trainDataset:
                 y = x
-
                 grads = grad(x, y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
-                pred = self.model(x)
                 lossVal = calc_loss(x, y)
                 epochTrainLossAvg.update_state(lossVal)
                 print("Iter {:03d}: Train_Loss: {:.8f} ".format(iteration, epochTrainLossAvg.result()))
                 iteration = iteration + 1
 
-            for x, c, f in self.valDataset:
+            for x, c, f in self.testDataset:
                 y = x
-
-                # pred = self.model(x)
                 lossVal = calc_loss(x, y)
                 epochValLossAvg.update_state(lossVal)
 
@@ -246,9 +233,17 @@ class AutoEncoder:
 
             self.save_weights()
 
-    def test(self):
+    def predict(self):
 
         for x, c, f in self.testDataset:
+            inp = x.numpy()
+            inp = inp[0, :, :, :, 0]
+            indexX, indexY, indexZ = np.where(inp > 0.5)
+            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            visualize_point_cloud(pointCloud)
             pred = self.model(x)
             pred = pred.numpy()
             pred = pred[0, :, :, :, 0]
@@ -281,6 +276,5 @@ class AutoEncoder:
 
         if self.isTrain:
             self.train()
-            # self.test()
         else:
             self.predict()

@@ -114,9 +114,9 @@ class SobelFilter(tfk.layers.Layer):
         super(SobelFilter, self).__init__(**kwargs)
         self.kernelX = tfk.initializers.constant([
             [
-                [-1., -2., -1.],
-                [-2., -4., -2.],
-                [-1., -2., -1.]
+                [1., 2., 1.],
+                [2., 4., 2.],
+                [1., 2., 1.]
             ],
             [
                 [0., 0., 0.],
@@ -124,61 +124,90 @@ class SobelFilter(tfk.layers.Layer):
                 [0., 0., 0.]
             ],
             [
-                [1., 2., 1.],
-                [2., 4., 2.],
-                [1., 2., 1.]
+                [-1., -2., -1.],
+                [-2., -4., -2.],
+                [-1., -2., -1.]
             ]
         ])
         self.kernelY = tfk.initializers.constant([
             [
-                [-1., -2., -1.],
+                [1., 2., 1.],
                 [0., 0., 0.],
-                [1., 2., 1.]
+                [-1., -2., -1.]
             ],
             [
-                [-2., -4., -2.],
+                [2., 4., 2.],
                 [0., 0., 0.],
-                [2., 4., 2.]
+                [-2., -4., -2.]
             ],
             [
-                [-1., -2., -1.],
+                [1., 2., 1.],
                 [0., 0., 0.],
-                [1., 2., 1.]
+                [-1., -2., -1.]
             ]
         ])
         self.kernelZ = tfk.initializers.constant([
             [
-                [-1., 0., 1.],
-                [-2., 0., 2.],
-                [-1., 0., -1.]
+                [1., 0., -1.],
+                [2., 0., -2.],
+                [1., 0., -1.]
             ],
             [
-                [-2., 0., 2.],
-                [-4., 0., 4.],
-                [-2., 0., 2.]
+                [2., 0., -2.],
+                [4., 0., -4.],
+                [2., 0., -2.]
             ],
             [
-                [-1., 0., 1.],
-                [-2., 0., 2.],
-                [-1., 0., 1.]
+                [1., 0., -1.],
+                [2., 0., -2.],
+                [1., 0., -1.]
             ]
         ])
-        bias = tfk.initializers.Constant([0])
         self.convX = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelX,
-                                       bias_initializer=bias, name='Sobel_ConvX')
+                                       use_bias=False, name='Sobel_ConvX')
         self.convY = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelY,
-                                       bias_initializer=bias, name='Sobel_ConvY')
+                                       use_bias=False, name='Sobel_ConvY')
         self.convZ = tfk.layers.Conv3D(1, (3, 3, 3), padding='same', kernel_initializer=self.kernelZ,
-                                       bias_initializer=bias, name='Sobel_ConvZ')
+                                       use_bias=False, name='Sobel_ConvZ')
 
     def call(self, input):
-        x = self.convX(input)
-        y = self.convY(input)
-        z = self.convZ(input)
+        x = tf.divide(self.convX(input), 16.0)
+        y = tf.divide(self.convY(input), 16.0)
+        z = tf.divide(self.convZ(input), 16.0)
 
-        mag = tf.sqrt(tf.square(x) + tf.square(y) + tf.square(z))
+        ang_xy = tf.atan(y/(x+1e-5))
+        ang_xz = tf.atan(z/(x+1e-5))
+        ang_yz = tf.atan(z/(y+1e-5))
 
-        return mag
+        x = tf.abs(x)
+        y = tf.abs(y)
+        z = tf.abs(z)
+
+        return tf.concat([x, y, z, ang_xy, ang_xz, ang_yz], axis=-1)
+
+
+class ClusteringLayer(tfk.layers.Layer):
+    def __init__(self, nClusters=2, weights=None, alpha=1.0, **kwargs):
+        super(ClusteringLayer, self).__init__(**kwargs)
+        self.nClusters = nClusters
+        self.initWeights = weights
+        self.alpha = alpha
+
+    def build(self, input_shape):
+        feat_dim = input_shape[-1]
+        self.clusters = self.add_weight(shape=(self.nClusters, feat_dim), initializer=tfk.initializers.glorot_uniform, name='Clusters')
+        if self.initWeights is not None:
+            self.set_weights(self.initWeights)
+            del self.initWeights
+        self.built = True
+
+    def call(self, inputs):
+        dist = tf.reduce_sum(tf.square(tf.subtract(tf.expand_dims(inputs, axis=-2), self.clusters)), axis=-1)
+        pdf = 1.0 / (1.0 + dist/self.alpha)
+        pdf = tf.pow(pdf, ((self.alpha + 1.0)/2.0))
+        pdf = tf.divide(pdf, tf.expand_dims(tf.reduce_sum(pdf, axis=-1), axis=-1))
+
+        return pdf
 
 
 class WeightedLoss(tfk.losses.Loss):

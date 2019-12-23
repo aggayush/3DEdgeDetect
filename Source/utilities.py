@@ -33,7 +33,7 @@ def arg_creator():
                         dest='logDir',
                         help='Log Directory path')
     parser.add_argument('--model-name',
-                        default='depth_model.h5',
+                        default='encoder_decoder.h5',
                         dest='modelName',
                         help='Model filename to load into memory')
     parser.add_argument('--is-train',
