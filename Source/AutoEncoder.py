@@ -16,9 +16,9 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 class AutoEncoder:
-    VOXEL_GRID_X = 32
-    VOXEL_GRID_Y = 32
-    VOXEL_GRID_Z = 32
+    VOXEL_GRID_X = 64
+    VOXEL_GRID_Y = 64
+    VOXEL_GRID_Z = 64
     DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self, args=None):
@@ -32,12 +32,13 @@ class AutoEncoder:
             self.isTrain = False
             self.isStreamed = False
             self.usePreTrained = True
-            self.batchSize = 40
+            self.batchSize = 10
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
-            self.learningRate = 0.001
-            self.epochs = 30
+            self.learningRate = 0.01
+            self.epochs = 300
+            self.trainValRatio = 0.2
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -54,6 +55,7 @@ class AutoEncoder:
             self.dropoutRate = args.dropoutRate
             self.learningRate = args.learningRate
             self.epochs = args.epochs
+            self.trainValRatio = args.trainValRatio
         self.prefetchBufferSize = 100
         self.trainDataset = None
         self.testDataset = None
@@ -112,12 +114,13 @@ class AutoEncoder:
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
+
         self.trainDataset = self.trainDataset.batch(self.batchSize)
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
-        self.testDataset = self.testDataset.batch(1)
+        self.testDataset = self.testDataset.batch(self.batchSize)
         self.testDataset = self.testDataset.prefetch(self.prefetchBufferSize)
 
         # # to see filename and visualize data
@@ -153,6 +156,7 @@ class AutoEncoder:
                                    activation=self.activation,
                                    input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
                                    name='Conv1')(input)
+        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout1')(layers)
         layers = tfk.layers.MaxPool3D((2, 2, 2),
                                       name='MaxPool1')(layers)
         layers = tfk.layers.Conv3D(64,
@@ -160,6 +164,7 @@ class AutoEncoder:
                                    padding='same',
                                    activation=self.activation,
                                    name='Conv2')(layers)
+        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout2')(layers)
         layers = tfk.layers.MaxPool3D((2, 2, 2),
                                       name='MaxPool2')(layers)
         layers = tfk.layers.Conv3D(64,
@@ -167,6 +172,7 @@ class AutoEncoder:
                                    padding='same',
                                    activation=self.activation,
                                    name='Conv3')(layers)
+        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout3')(layers)
         layers = tfk.layers.Conv3DTranspose(64,
                                             (3, 3, 3),
                                             strides=(2, 2, 2),
@@ -174,6 +180,7 @@ class AutoEncoder:
                                             activation=self.activation,
                                             name='DeConv3')(layers)
         layers = tfk.layers.BatchNormalization(name='BatchNorm3')(layers)
+        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout4')(layers)
         layers = tfk.layers.Conv3DTranspose(64,
                                             (3, 3, 3),
                                             strides=(2, 2, 2),
@@ -181,6 +188,7 @@ class AutoEncoder:
                                             activation=self.activation,
                                             name='DeConv2')(layers)
         layers = tfk.layers.BatchNormalization(name='BatchNorm2')(layers)
+        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout5')(layers)
         outFinal = tfk.layers.Conv3D(1,
                                      (3, 3, 3),
                                      padding='same',
@@ -193,7 +201,7 @@ class AutoEncoder:
 
     def train(self):
 
-        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, clipvalue=10.0)
+        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, decay=self.learningRate/(self.epochs*250), clipvalue=10.0)
         loss = WeightedLoss(4, 2, 1)
 
         def calc_loss(inp, tar):
@@ -213,9 +221,11 @@ class AutoEncoder:
             iteration = 0
             for x, c, f in self.trainDataset:
                 y = x
+
                 grads = grad(x, y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
+                # pred = self.model(x)
                 lossVal = calc_loss(x, y)
                 epochTrainLossAvg.update_state(lossVal)
                 print("Iter {:03d}: Train_Loss: {:.8f} ".format(iteration, epochTrainLossAvg.result()))
@@ -236,14 +246,6 @@ class AutoEncoder:
     def predict(self):
 
         for x, c, f in self.testDataset:
-            inp = x.numpy()
-            inp = inp[0, :, :, :, 0]
-            indexX, indexY, indexZ = np.where(inp > 0.5)
-            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
-            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
-            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
-            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            visualize_point_cloud(pointCloud)
             pred = self.model(x)
             pred = pred.numpy()
             pred = pred[0, :, :, :, 0]
