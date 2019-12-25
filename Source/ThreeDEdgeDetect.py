@@ -9,7 +9,7 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, ClusteringLayer
+from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, ClusteringLayer, MinPooling3D
 from tensorflow.python.framework.ops import disable_eager_execution
 from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud
 
@@ -34,15 +34,15 @@ class ThreeDEdgeDetector:
             self.logDir = './log/'
             self.modelName = 'edge_model.h5'
             self.encoderModelName = 'encoder_decoder.h5'
-            self.isTrain = True
+            self.isTrain = False
             self.isStreamed = False
             self.usePreTrained = True
-            self.batchSize = 20
+            self.batchSize = 40
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
-            self.learningRate = 0.001
-            self.epochs = 50
+            self.learningRate = 0.01
+            self.epochs = 100
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -112,8 +112,8 @@ class ThreeDEdgeDetector:
 
         trainPath = os.path.join(trainPath, '*.xyz')
         testPath = os.path.join(testPath, '*.xyz')
-        trainFilesDs = tf.data.Dataset.list_files(trainPath)
-        testFilesDs = tf.data.Dataset.list_files(testPath)
+        trainFilesDs = tf.data.Dataset.list_files(trainPath, shuffle=False)
+        testFilesDs = tf.data.Dataset.list_files(testPath, shuffle=False)
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
         # self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
@@ -121,8 +121,8 @@ class ThreeDEdgeDetector:
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
-        self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
-        self.testDataset = self.testDataset.batch(1)
+        # self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
+        self.testDataset = self.testDataset.batch(40)
         self.testDataset = self.testDataset.prefetch(self.prefetchBufferSize)
 
         # # to see filename and visualize data
@@ -138,7 +138,7 @@ class ThreeDEdgeDetector:
         file = os.path.join(self.modelPath, self.modelName)
         encoderFile = os.path.join(self.modelPath, self.encoderModelName)
         if os.path.exists(file):
-            self.model.load_weights(file)
+            self.model.load_weights(file, by_name=True)
             print("Loaded complete pre-trained model")
         elif os.path.exists(encoderFile):
             self.model.load_weights(encoderFile, by_name=True)
@@ -156,7 +156,7 @@ class ThreeDEdgeDetector:
 
     def create_model(self):
 
-        input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1))
+        input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1), batch_size=self.batchSize)
 
         layers1 = tfk.layers.Conv3D(64,
                                     (3, 3, 3),
@@ -171,7 +171,6 @@ class ThreeDEdgeDetector:
                                     strides=(1, 1, 1),
                                     padding='same',
                                     name='Branch1_Conv1')(layers1)
-        branch1 = tfk.layers.Activation(activation='sigmoid')(branch1)
         branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(branch1)
         branch1 = tfk.layers.Activation(activation=self.activation, name='Branch1_Act')(branch1)
 
@@ -192,12 +191,11 @@ class ThreeDEdgeDetector:
                                     strides=(1, 1, 1),
                                     padding='same',
                                     name='Branch2_Conv1')(layers2)
-        branch2 = tfk.layers.Conv3DTranspose(1,
-                                             (4, 4, 4),
-                                             strides=(2, 2, 2),
-                                             padding='same',
-                                             name='Branch2_DeConv1')(branch2)
-        branch2 = tfk.layers.Activation(activation='sigmoid')(branch2)
+        # branch2 = tfk.layers.Conv3DTranspose(1,
+        #                                      (4, 4, 4),
+        #                                      strides=(2, 2, 2),
+        #                                      padding='same',
+        #                                      name='Branch2_DeConv1')(branch2)
         branch2 = SobelFilter(name='Branch2_Sobel1', trainable=False)(branch2)
         branch2 = tfk.layers.Activation(activation=self.activation, name='Branch2_Act')(branch2)
 
@@ -218,18 +216,22 @@ class ThreeDEdgeDetector:
                                     strides=(1, 1, 1),
                                     padding='same',
                                     name='Branch3_Conv1')(layers3)
-        branch3 = tfk.layers.Conv3DTranspose(1,
-                                             (8, 8, 8),
-                                             strides=(4, 4, 4),
-                                             padding='same',
-                                             name='Branch3_DeConv1')(branch3)
-        branch3 = tfk.layers.Activation(activation='sigmoid')(branch3)
+        # branch3 = tfk.layers.Conv3DTranspose(1,
+        #                                      (8, 8, 8),
+        #                                      strides=(4, 4, 4),
+        #                                      padding='same',
+        #                                      name='Branch3_DeConv1')(branch3)
         branch3 = SobelFilter(name='Branch3_Sobel1', trainable=False)(branch3)
         branch3 = tfk.layers.Activation(activation=self.activation, name='Branch3_Act')(branch3)
 
-        layers4 = tfk.layers.Average()([branch1, branch2, branch3])
+        # layers4 = tfk.layers.Average()([branch1, branch2, branch3])
+        layers4 = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
+                                  'avg',
+                                  trainable=True)([branch1, branch2, branch3])
+        layers4 = MinPooling3D(pool_size=(3, 3, 3),
+                               strides=(1, 1, 1),
+                               padding='same')(layers4)
         outFinal = ClusteringLayer()(layers4)
-
         self.model = tfk.Model(inputs=input, outputs=outFinal)
 
         self.model.summary()
@@ -256,27 +258,34 @@ class ThreeDEdgeDetector:
 
             return weight
 
+        update_epoch=4
+
         for epoch in range(self.epochs):
             epochTrainLossAvg = tfk.metrics.Mean()
 
             epochValLossAvg = tfk.metrics.Mean()
 
-            whole_pred = None
-            # updating the target distribution
-            for x, c, f in self.trainDataset:
-                p = self.model(x)
-                if whole_pred is None:
-                    whole_pred = p
-                else:
-                    whole_pred = tf.concat([whole_pred, p], axis=0)
+            if epoch % update_epoch == 0:
+                whole_pred = None
+                # updating the target distribution
+                for x, c, f in self.trainDataset:
+                    p = self.model(x)
+                    if whole_pred is None:
+                        whole_pred = p
+                    else:
+                        whole_pred = tf.concat([whole_pred, p], axis=0)
 
-            y = update_target_distribution(whole_pred)
+                y = update_target_distribution(whole_pred)
 
-            predDataset = tf.data.Dataset.from_tensor_slices(y)
-            predDataset = predDataset.batch(self.batchSize)
-            predDataset = predDataset.prefetch(self.prefetchBufferSize)
+                predDataset = tf.data.Dataset.from_tensor_slices(y)
+                predDataset = predDataset.batch(self.batchSize)
+                predDataset = predDataset.prefetch(self.prefetchBufferSize)
 
-            finalDataset = tf.data.Dataset.zip((self.trainDataset, predDataset))
+                finalDataset = tf.data.Dataset.zip((self.trainDataset, predDataset))
+
+                del predDataset
+                del y
+                del whole_pred
 
             iteration = 0
             for x, y in finalDataset:
@@ -288,11 +297,6 @@ class ThreeDEdgeDetector:
 
                 print("iter {:04d}: Train_loss: {:.8f}".format(iteration, lossVal))
                 iteration = iteration + 1
-
-            del predDataset
-            del finalDataset
-            del y
-            del whole_pred
 
             # for x, c, f in self.testDataset:
             #     lossVal = calc_loss(x, y)
@@ -319,9 +323,14 @@ class ThreeDEdgeDetector:
             pred = self.model(x)
             pred = pred.numpy()
             pred = pred[0, :, :, :, :]
-            pred = np.argmax(pred, axis=-1)
             # pred = 1 - pred
-            indexX, indexY, indexZ = np.where(pred > 0.5)
+            pred_idx = np.argmax(pred, axis=-1)
+            pred_val = np.max(pred, axis=-1)
+            indexX, indexY, indexZ = np.where(pred_idx > 0)
+            idx = np.where(pred_val[indexX, indexY, indexZ] < 0.5)
+            indexX = np.delete(indexX, idx)
+            indexY = np.delete(indexY, idx)
+            indexZ = np.delete(indexZ, idx)
             pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
@@ -345,14 +354,24 @@ class ThreeDEdgeDetector:
             self.load_weights()
 
         # data = next(iter(self.testDataset))
-        # out = self.model(data[0])
+        # thr = LearnableThreshold()
+        # out = thr(data[0])
+        # # sob = SobelFilter()
+        # # out = sob(data[0])
+        # dat = tf.concat([data[0], data[0]], axis=-1)
+        # merg = MergePointCloud([128,128,128], 'avg')
+        # out = merg([dat, dat])
         # out = out.numpy()
-        # out = out[0, :, :, :, :]
-        # out = np.argmax(out, axis=-1)
-        # inp = np.abs(inp)
-        # indexX, indexY, indexZ = np.where(inp > 0.5)
-        # inp[indexX, indexY, indexZ] = 0
-        # indexX, indexY, indexZ = np.where(inp > 0)
+        # out = out[0, :, :, :, 0:3]
+        # out = np.sqrt(np.sum(np.square(out), axis=-1))
+        # # out = data[0].numpy()
+        # # out = out[0,:,:,:,0]
+        # # out = np.argmax(out, axis=-1)
+        # inp=out
+        # # inp = np.abs(inp)
+        # # indexX, indexY, indexZ = np.where(inp > 0.3)
+        # # inp[indexX, indexY, indexZ] = 0
+        # indexX, indexY, indexZ = np.where(inp > 1)
         # pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
         # pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
         # pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)

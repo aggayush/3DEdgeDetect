@@ -37,15 +37,16 @@ class MergePointCloud(tfk.layers.Layer):
 
     def transformGrid(self, voxelGrid):
 
-        voxelGrid = tf.squeeze(voxelGrid, [-1])
+        # voxelGrid = tf.squeeze(voxelGrid, [-1])
         shape = tf.shape(voxelGrid)
 
         outSize = tf.convert_to_tensor(self.outputSize)
         tp = tf.expand_dims(shape[0], axis=0)
-        outSize = tf.concat([tp, outSize], axis=0)
+        fp = tf.expand_dims(shape[-1], axis=0)
+        outSize = tf.concat([tp, outSize, fp], axis=0)
         outSize = tf.cast(outSize, tf.int64)
 
-        voxelX, voxelY, voxelZ = self.create_all_indexes(shape[1:])
+        voxelX, voxelY, voxelZ = self.create_all_indexes(shape[1:-1])
 
         voxelX = tf.cast(voxelX, tf.float64)
         voxelY = tf.cast(voxelY, tf.float64)
@@ -68,13 +69,40 @@ class MergePointCloud(tfk.layers.Layer):
         voxelY = tf.tile(voxelY, [shape[0]])
         voxelZ = tf.tile(voxelZ, [shape[0]])
 
-        newGrid = tf.cast(tf.stack([batchAxis, voxelX, voxelY, voxelZ], axis=1), tf.int64)
+        feat = tf.range(shape[-1])
+        feat = tf.tile(feat, [tf.shape(voxelX)[0]])
+
+        batchAxis = tf.expand_dims(batchAxis, axis=1)
+        batchAxis = tf.tile(batchAxis, [1, shape[-1]])
+        batchAxis = tf.reshape(batchAxis, [-1])
+        voxelX = tf.expand_dims(voxelX, axis=1)
+        voxelX = tf.tile(voxelX, [1, shape[-1]])
+        voxelX = tf.reshape(voxelX, [-1])
+        voxelY = tf.expand_dims(voxelY, axis=1)
+        voxelY = tf.tile(voxelY, [1, shape[-1]])
+        voxelY = tf.reshape(voxelY, [-1])
+        voxelZ = tf.expand_dims(voxelZ, axis=1)
+        voxelZ = tf.tile(voxelZ, [1, shape[-1]])
+        voxelZ = tf.reshape(voxelZ, [-1])
+
+        newGrid = tf.cast(tf.stack([batchAxis, voxelX, voxelY, voxelZ, feat], axis=1), tf.int64)
         newGridValues = tf.reshape(voxelGrid, [-1])
 
         delta = tf.sparse.SparseTensor(indices=newGrid, values=newGridValues, dense_shape=outSize)
         grid = tf.sparse.to_dense(delta, default_value=0.0, validate_indices=False)
 
         grid = tf.expand_dims(grid, axis=-1)
+
+        del batchAxis
+        del voxelX
+        del voxelY
+        del voxelZ
+        del feat
+        del shape
+        del outSize
+        del newGrid
+        del newGridValues
+        del delta
 
         return grid
 
@@ -104,7 +132,8 @@ class MergePointCloud(tfk.layers.Layer):
         fn = self.functionMap()
 
         finalVoxelGrid = fn(stackedGrid, axis=-1)
-        finalVoxelGrid = tf.expand_dims(finalVoxelGrid, axis=-1)
+        # finalVoxelGrid = tf.expand_dims(finalVoxelGrid, axis=-1)
+        del stackedGrid
 
         return finalVoxelGrid
 
@@ -179,11 +208,10 @@ class SobelFilter(tfk.layers.Layer):
         ang_xz = tf.atan(z/(x+1e-5))
         ang_yz = tf.atan(z/(y+1e-5))
 
-        x = tf.abs(x)
-        y = tf.abs(y)
-        z = tf.abs(z)
+        mag = tf.sqrt(tf.add_n([tf.square(x), tf.square(y), tf.square(z)]))
 
-        return tf.concat([x, y, z, ang_xy, ang_xz, ang_yz], axis=-1)
+        # return tf.concat([mag, ang_xy, ang_xz, ang_yz], axis=-1)
+        return mag
 
 
 class ClusteringLayer(tfk.layers.Layer):
@@ -208,6 +236,28 @@ class ClusteringLayer(tfk.layers.Layer):
         pdf = tf.divide(pdf, tf.expand_dims(tf.reduce_sum(pdf, axis=-1), axis=-1))
 
         return pdf
+
+
+class MinPooling3D(tfk.layers.Layer):
+
+    def __init__(self, pool_size=(3, 3, 3), strides=(1, 1, 1), padding='same', **kwargs):
+        super(MinPooling3D, self).__init__(**kwargs)
+        self.poolSize = pool_size
+        self.strides = strides
+        self.padding = padding
+
+    def build(self, input_shape):
+        self.maxPool = tfk.layers.MaxPool3D(pool_size=self.poolSize,
+                                            strides=self.strides,
+                                            padding=self.padding)
+        self.build = True
+
+    def call(self, inputs):
+        result = tf.multiply(inputs, -1.0)
+        result = self.maxPool(result)
+        result = tf.multiply(result, -1.0)
+
+        return result
 
 
 class WeightedLoss(tfk.losses.Loss):
