@@ -6,7 +6,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 import tensorflow as tf
 import tensorflow.keras as tfk
-import math
+import numpy as np
 
 
 class MergePointCloud(tfk.layers.Layer):
@@ -214,9 +214,45 @@ class SobelFilter(tfk.layers.Layer):
         return mag
 
 
-class ClusteringLayer(tfk.layers.Layer):
+class GMMClusteringLayer(tfk.layers.Layer):
+
+    def __init__(self, nClusters=2, means=None, variance=None, weights=None, **kwargs):
+        super(GMMClusteringLayer, self).__init__(**kwargs)
+        self.nClusters = nClusters
+        if weights is None:
+            self.initWeights = tfk.initializers.constant(np.ones(shape=[self.nClusters], dtype=float)* (1./self.nClusters))
+
+        if means is None:
+            self.initMeans = tf.random_uniform_initializer(minval=0.0, maxval=100.0)
+
+        if variance is None:
+            self.initVariance = tf.random_uniform_initializer(minval=0.0, maxval=100.0)
+
+    def build(self, input_shape):
+        val = np.log(2 * np.pi) * input_shape[-1]
+        self.ln2piD = tf.constant(val, dtype=tf.float32)
+        self.means = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initMeans, name='gmm_mean')
+        self.variance = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initVariance, name='gmm_variance')
+        self.clusWeights = self.add_weight(shape=(self.nClusters,), initializer=self.initWeights)
+        self.built = True
+
+    def call(self, inputs):
+        distances = tf.math.squared_difference(tf.expand_dims(inputs, -2), self.means)
+        dist_times_inv_var = tf.reduce_sum(distances / self.variance, -1)
+        log_coefficients = tf.add(self.ln2piD, tf.reduce_sum(tf.math.log(self.variance), 1))
+        log_components = -0.5 * (log_coefficients + dist_times_inv_var)
+        log_weighted = log_components + tf.math.log(self.clusWeights)
+        log_shift = tf.expand_dims(tf.reduce_max(log_weighted, -1), -1)
+        exp_log_shifted = tf.exp(log_weighted - log_shift)
+        exp_log_shifted_sum = tf.reduce_sum(exp_log_shifted, -1)
+        gamma = exp_log_shifted / tf.expand_dims(exp_log_shifted_sum, -1)
+
+        return gamma
+
+
+class KMeansClusteringLayer(tfk.layers.Layer):
     def __init__(self, nClusters=2, weights=None, alpha=1.0, **kwargs):
-        super(ClusteringLayer, self).__init__(**kwargs)
+        super(KMeansClusteringLayer, self).__init__(**kwargs)
         self.nClusters = nClusters
         self.initWeights = weights
         self.alpha = alpha

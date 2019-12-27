@@ -16,9 +16,9 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 class AutoEncoder:
-    VOXEL_GRID_X = 64
-    VOXEL_GRID_Y = 64
-    VOXEL_GRID_Z = 64
+    VOXEL_GRID_X = 32
+    VOXEL_GRID_Y = 32
+    VOXEL_GRID_Z = 32
     DATA_DEFAULTS = [[0.], [0.], [0.]]
 
     def __init__(self, args=None):
@@ -29,10 +29,10 @@ class AutoEncoder:
             self.modelPath = './Model/'
             self.logDir = './log/'
             self.modelName = 'encoder_decoder.h5'
-            self.isTrain = False
+            self.isTrain = True
             self.isStreamed = False
             self.usePreTrained = True
-            self.batchSize = 10
+            self.batchSize = 40
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
@@ -109,8 +109,8 @@ class AutoEncoder:
 
         trainPath = os.path.join(trainPath, '*.xyz')
         testPath = os.path.join(testPath, '*.xyz')
-        trainFilesDs = tf.data.Dataset.list_files(trainPath)
-        testFilesDs = tf.data.Dataset.list_files(testPath)
+        trainFilesDs = tf.data.Dataset.list_files(trainPath, shuffle=False)
+        testFilesDs = tf.data.Dataset.list_files(testPath, shuffle=False)
 
         self.trainDataset = trainFilesDs.map(lambda filePath: self.process_data_files(filePath))
         self.trainDataset = self.trainDataset.shuffle(self.shuffleBufferSize)
@@ -119,8 +119,8 @@ class AutoEncoder:
         self.trainDataset = self.trainDataset.prefetch(self.prefetchBufferSize)
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
-        self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
-        self.testDataset = self.testDataset.batch(self.batchSize)
+        # self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
+        self.testDataset = self.testDataset.batch(1)
         self.testDataset = self.testDataset.prefetch(self.prefetchBufferSize)
 
         # # to see filename and visualize data
@@ -135,7 +135,7 @@ class AutoEncoder:
 
         file = os.path.join(self.modelPath, self.modelName)
         if os.path.exists(file):
-            self.model.load_weights(file)
+            self.model.load_weights(file, by_name=True)
         else:
             print('Pre-trained Model not exists. using default weights!!')
 
@@ -150,45 +150,38 @@ class AutoEncoder:
 
         input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1))
 
-        layers = tfk.layers.Conv3D(64,
+        layers = tfk.layers.Conv3D(5,
                                    (3, 3, 3),
                                    padding='same',
                                    activation=self.activation,
                                    input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
-                                   name='Conv1')(input)
-        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout1')(layers)
-        layers = tfk.layers.MaxPool3D((2, 2, 2),
-                                      name='MaxPool1')(layers)
-        layers = tfk.layers.Conv3D(64,
+                                   name='Encoder_Conv1')(input)
+        layers = tfk.layers.Conv3D(5,
                                    (3, 3, 3),
+                                   strides=(2, 2, 2),
                                    padding='same',
                                    activation=self.activation,
-                                   name='Conv2')(layers)
-        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout2')(layers)
-        layers = tfk.layers.MaxPool3D((2, 2, 2),
-                                      name='MaxPool2')(layers)
-        layers = tfk.layers.Conv3D(64,
+                                   name='Encoder_Conv2')(layers)
+        layers = tfk.layers.Conv3D(5,
                                    (3, 3, 3),
+                                   strides=(2, 2, 2),
                                    padding='same',
                                    activation=self.activation,
-                                   name='Conv3')(layers)
-        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout3')(layers)
-        layers = tfk.layers.Conv3DTranspose(64,
+                                   name='Encoder_Conv3')(layers)
+        layers = tfk.layers.Conv3DTranspose(5,
                                             (3, 3, 3),
                                             strides=(2, 2, 2),
                                             padding='same',
                                             activation=self.activation,
                                             name='DeConv3')(layers)
         layers = tfk.layers.BatchNormalization(name='BatchNorm3')(layers)
-        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout4')(layers)
-        layers = tfk.layers.Conv3DTranspose(64,
+        layers = tfk.layers.Conv3DTranspose(5,
                                             (3, 3, 3),
                                             strides=(2, 2, 2),
                                             padding='same',
                                             activation=self.activation,
                                             name='DeConv2')(layers)
         layers = tfk.layers.BatchNormalization(name='BatchNorm2')(layers)
-        layers = tfk.layers.SpatialDropout3D(self.dropoutRate, name='Dropout5')(layers)
         outFinal = tfk.layers.Conv3D(1,
                                      (3, 3, 3),
                                      padding='same',
@@ -248,8 +241,8 @@ class AutoEncoder:
         for x, c, f in self.testDataset:
             pred = self.model(x)
             pred = pred.numpy()
-            pred = pred[0, :, :, :, 0]
-            indexX, indexY, indexZ = np.where(pred > 0.5)
+            pred = pred[0, :, :, :, 4]
+            indexX, indexY, indexZ = np.where(pred < 0.05)
             pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)

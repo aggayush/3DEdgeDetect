@@ -8,6 +8,7 @@ from os import listdir
 from os.path import isfile, join
 import open3d
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def arg_creator():
@@ -108,3 +109,16 @@ def visualize_point_cloud(points):
     cord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[-1, -1, -1])
     pcd.points = open3d.utility.Vector3dVector(np.array(points))
     open3d.visualization.draw_geometries([pcd, cord])
+
+def visualize_histogram(grid):
+    grid = np.squeeze(grid, -1)
+    indexX, indexY, indexZ = np.where(grid > 4)
+    pointsX = (indexX - (32 / 2)) / (32 / 2) + (1 / 32)
+    pointsY = (indexY - (32 / 2)) / (32 / 2) + (1 / 32)
+    pointsZ = (indexZ - (32 / 2)) / (32 / 2) + (1 / 32)
+    pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+    visualize_point_cloud(pointCloud)
+    grid = np.reshape(grid, [-1,])
+    _ = plt.hist(grid, bins='auto')
+    plt.show()
+
