@@ -9,9 +9,11 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, KMeansClusteringLayer, MinPooling3D, GMMClusteringLayer
+from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, KMeansClusteringLayer, MinPooling3D, \
+    GMMClusteringLayer
 from tensorflow.python.framework.ops import disable_eager_execution
-from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud, visualize_histogram
+from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud, visualize_histogram, \
+    save_point_cloud
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -42,7 +44,7 @@ class ThreeDEdgeDetector:
             self.activation = 'relu'
             self.dropoutRate = 0.01
             self.learningRate = 0.01
-            self.epochs = 200
+            self.epochs = 100
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -122,7 +124,7 @@ class ThreeDEdgeDetector:
 
         self.testDataset = testFilesDs.map(lambda filePath: self.process_data_files(filePath))
         # self.testDataset = self.testDataset.shuffle(self.shuffleBufferSize)
-        self.testDataset = self.testDataset.batch(40)
+        self.testDataset = self.testDataset.batch(1)
         self.testDataset = self.testDataset.prefetch(self.prefetchBufferSize)
 
         # # to see filename and visualize data
@@ -165,12 +167,12 @@ class ThreeDEdgeDetector:
                                        input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
                                        name='Encoder_Conv1')(input)
 
-        branch1 = tfk.layers.Conv3D(1,
-                                    (1, 1, 1),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    name='Branch1_Conv1')(enc_layers)
-        branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(branch1)
+        branch11 = tfk.layers.Conv3D(1,
+                                     (1, 1, 1),
+                                     strides=(1, 1, 1),
+                                     padding='same',
+                                     name='Branch1_Conv1')(enc_layers)
+        branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(branch11)
         branch1 = tfk.layers.Activation(activation=self.activation, name='Branch1_Act')(branch1)
 
         enc_layers = tfk.layers.Conv3D(5,
@@ -180,71 +182,79 @@ class ThreeDEdgeDetector:
                                        activation=self.activation,
                                        name='Encoder_Conv2')(enc_layers)
 
-        branch2 = tfk.layers.Conv3D(1,
-                                    (1, 1, 1),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    name='Branch2_Conv1')(enc_layers)
-        branch2 = SobelFilter(name='Branch2_Sobel1', trainable=False)(branch2)
+        branch21 = tfk.layers.Conv3D(1,
+                                     (1, 1, 1),
+                                     strides=(1, 1, 1),
+                                     padding='same',
+                                     name='Branch2_Conv1')(enc_layers)
+        branch2 = SobelFilter(name='Branch2_Sobel1', trainable=False)(branch21)
         branch2 = tfk.layers.Activation(activation=self.activation, name='Branch2_Act')(branch2)
 
         enc_layers = tfk.layers.Conv3D(5,
-                                   (3, 3, 3),
-                                   strides=(2, 2, 2),
-                                   padding='same',
-                                   activation=self.activation,
-                                   name='Encoder_Conv3')(enc_layers)
+                                       (3, 3, 3),
+                                       strides=(2, 2, 2),
+                                       padding='same',
+                                       activation=self.activation,
+                                       name='Encoder_Conv3')(enc_layers)
 
-        branch3 = tfk.layers.Conv3D(1,
-                                    (1, 1, 1),
-                                    strides=(1, 1, 1),
-                                    padding='same',
-                                    name='Branch3_Conv1')(enc_layers)
-        branch3 = SobelFilter(name='Branch3_Sobel1', trainable=False)(branch3)
+        branch31 = tfk.layers.Conv3D(1,
+                                     (1, 1, 1),
+                                     strides=(1, 1, 1),
+                                     padding='same',
+                                     name='Branch3_Conv1')(enc_layers)
+        branch3 = SobelFilter(name='Branch3_Sobel1', trainable=False)(branch31)
         branch3 = tfk.layers.Activation(activation=self.activation, name='Branch3_Act')(branch3)
 
         dec_layers = tfk.layers.Conv3DTranspose(5,
-                                            (3, 3, 3),
-                                            strides=(2, 2, 2),
-                                            padding='same',
-                                            activation=self.activation,
-                                            name='DeConv3')(enc_layers)
+                                                (3, 3, 3),
+                                                strides=(2, 2, 2),
+                                                padding='same',
+                                                activation=self.activation,
+                                                name='DeConv3')(enc_layers)
         dec_layers = tfk.layers.BatchNormalization(name='BatchNorm3')(dec_layers)
         dec_layers = tfk.layers.Conv3DTranspose(5,
-                                            (3, 3, 3),
-                                            strides=(2, 2, 2),
-                                            padding='same',
-                                            activation=self.activation,
-                                            name='DeConv2')(dec_layers)
+                                                (3, 3, 3),
+                                                strides=(2, 2, 2),
+                                                padding='same',
+                                                activation=self.activation,
+                                                name='DeConv2')(dec_layers)
         dec_layers = tfk.layers.BatchNormalization(name='BatchNorm2')(dec_layers)
         outFinal_encdec = tfk.layers.Conv3D(1,
-                                     (3, 3, 3),
-                                     padding='same',
-                                     activation='sigmoid',
-                                     name='FinalOut')(dec_layers)
+                                            (3, 3, 3),
+                                            padding='same',
+                                            activation='sigmoid',
+                                            name='Encoder_decoder_out')(dec_layers)
+
+        outFinal_enc = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
+                                       'sum',
+                                       normalize=False,
+                                       name='encoder_merge',
+                                       trainable=True)([branch11, branch21, branch31])
+        outFinal_enc = tfk.layers.Activation('sigmoid', name='Encoder_branch_out')(outFinal_enc)
 
         outFinal_clus = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
-                                  'avg',
-                                  trainable=True)([branch1, branch2, branch3])
-        # outFinal_clus = MinPooling3D(pool_size=(2, 2, 2),
-        #                        strides=(1, 1, 1),
-        #                        padding='same')(outFinal_clus)
-        outFinal_clus = GMMClusteringLayer(name='gmm_clus1')(outFinal_clus)
+                                        'sum',
+                                        normalize=True,
+                                        trainable=True)([branch1, branch2, branch3])
+        outFinal_clus = tfk.layers.Activation('relu')(outFinal_clus)
+        outFinal_clus = KMeansClusteringLayer(nClusters=2, name='kmm_clus')(outFinal_clus)
 
-        self.model = tfk.Model(inputs=input, outputs=[outFinal_clus, outFinal_encdec])
+        self.model = tfk.Model(inputs=input, outputs=[outFinal_clus, outFinal_enc, outFinal_encdec])
 
         self.model.summary()
+        tfk.utils.plot_model(self.model, to_file='D:\\final_model.png', show_shapes=True)
 
     def train(self):
 
-        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, decay=self.learningRate/(self.epochs*125), clipvalue=10.0)
+        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, decay=self.learningRate / (self.epochs * 300),
+                                  clipvalue=10.0)
         loss_clus = tfk.losses.KLDivergence()
         loss_enc = WeightedLoss(4, 2, 1)
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
 
-            return loss_clus(tar[0], tar_[0]) + loss_enc(tar[1], tar_[1])
+            return loss_clus(tar[0], tar_[0]) + loss_enc(tar[1], tar_[1]) + loss_enc(tar[2], tar_[2])
 
         def grad(inp, tar):
             with tf.GradientTape() as tape:
@@ -289,10 +299,10 @@ class ThreeDEdgeDetector:
 
             iteration = 0
             for x, y in finalDataset:
-                grads = grad(x[0], [y, x[0]])
+                grads = grad(x[0], [y, x[0], x[0]])
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
-                lossVal = calc_loss(x[0], [y, x[0]])
+                lossVal = calc_loss(x[0], [y, x[0], x[0]])
                 epochTrainLossAvg.update_state(lossVal)
 
                 print("iter {:04d}: Train_loss: {:.8f}".format(iteration, lossVal))
@@ -311,34 +321,38 @@ class ThreeDEdgeDetector:
 
     def predict(self):
 
+        i = 0
         for x, c, f in self.testDataset:
+            print(i)
             inp = x.numpy()
             inp = inp[0, :, :, :, 0]
-            indexX, indexY, indexZ = np.where(inp > 0.5)
+            indexX, indexY, indexZ = np.where(inp > 0)
             pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            visualize_point_cloud(pointCloud)
+            # visualize_point_cloud(pointCloud)
+            save_point_cloud(pointCloud, self.outputPath, str(i) + "_orig")
             preds = self.model(x)
-            pred1 = preds[1]
-            pred1 = pred1.numpy()
-            pred1 = pred1[0, :, :, :, 0]
-            indexX, indexY, indexZ = np.where(pred1 > 0.5)
-            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
-            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
-            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
-            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            visualize_point_cloud(pointCloud)
+            # pred1 = preds[1]
+            # pred1 = pred1.numpy()
+            # pred1 = pred1[0, :, :, :, 0]
+            # indexX, indexY, indexZ = np.where(pred1 < -3)
+            # siz = 8
+            # pointsX = (indexX - (siz / 2)) / (siz / 2) + (1 / siz)
+            # pointsY = (indexY - (siz / 2)) / (siz / 2) + (1 / siz)
+            # pointsZ = (indexZ - (siz / 2)) / (siz / 2) + (1 / siz)
+            # pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            # visualize_point_cloud(pointCloud)
             pred = preds[0]
             pred = pred.numpy()
             pred = pred[0, :, :, :, :]
-            visualize_histogram(pred)
-            # pred = 1 - pred
+            # visualize_histogram(pred)
+            pred = 1 - pred
             pred_idx = np.argmax(pred, axis=-1)
             pred_val = np.max(pred, axis=-1)
             indexX, indexY, indexZ = np.where(pred_idx > 0)
-            idx = np.where(pred_val[indexX, indexY, indexZ] < 0.7)
+            idx = np.where(pred_val[indexX, indexY, indexZ] < 0.5)
             indexX = np.delete(indexX, idx)
             indexY = np.delete(indexY, idx)
             indexZ = np.delete(indexZ, idx)
@@ -346,7 +360,19 @@ class ThreeDEdgeDetector:
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            visualize_point_cloud(pointCloud)
+            # visualize_point_cloud(pointCloud)
+            save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5")
+            idx = np.where(pred_val[indexX, indexY, indexZ] > 0.6)
+            indexX = np.delete(indexX, idx)
+            indexY = np.delete(indexY, idx)
+            indexZ = np.delete(indexZ, idx)
+            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            # visualize_point_cloud(pointCloud)
+            save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5l6")
+            i = i + 1
 
     def run(self):
 

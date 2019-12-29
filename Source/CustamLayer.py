@@ -10,10 +10,11 @@ import numpy as np
 
 
 class MergePointCloud(tfk.layers.Layer):
-    def __init__(self, outputSize, outputFunction='avg', **kwargs):
+    def __init__(self, outputSize, outputFunction='avg', normalize=True, **kwargs):
         super(MergePointCloud, self).__init__(**kwargs)
         self.outputSize = outputSize
         self.outputFunction = outputFunction
+        self.norm = normalize
 
     def create_all_indexes(self, shape):
         # index arrays for each dimension
@@ -119,6 +120,46 @@ class MergePointCloud(tfk.layers.Layer):
         else:
             raise tf.errors.InvalidArgumentError('Invalid function type given for layer MergePointCloud')
 
+    def normalize(self, grid):
+        grid_shape = tf.shape(grid)
+        reshaped_grid = tf.reshape(grid, (grid_shape[0], -1))
+        max = tf.expand_dims(
+            tf.tile(
+                tf.expand_dims(
+                    tf.tile(
+                        tf.expand_dims(
+                            tf.tile(
+                                tf.reduce_max(reshaped_grid, axis=1, keepdims=True),
+                                [1, grid_shape[1]]),
+                            axis=-1),
+                        [1, 1, grid_shape[2]]),
+                    axis=-1),
+                [1, 1, 1, grid_shape[3]]),
+            axis=-1)
+        min = tf.expand_dims(
+            tf.tile(
+                tf.expand_dims(
+                    tf.tile(
+                        tf.expand_dims(
+                            tf.tile(
+                                tf.reduce_min(reshaped_grid, axis=1, keepdims=True),
+                                [1, grid_shape[1]]),
+                            axis=-1),
+                        [1, 1, grid_shape[2]]),
+                    axis=-1),
+                [1, 1, 1, grid_shape[3]]),
+            axis=-1)
+        diff = 2.0/(max-min)
+        grid = diff * grid - 1.0
+
+
+        del reshaped_grid
+        del min
+        del max
+        del diff
+
+        return grid
+
     def call(self, input):
 
         stackedGrid = None
@@ -132,7 +173,9 @@ class MergePointCloud(tfk.layers.Layer):
         fn = self.functionMap()
 
         finalVoxelGrid = fn(stackedGrid, axis=-1)
-        # finalVoxelGrid = tf.expand_dims(finalVoxelGrid, axis=-1)
+        if self.norm:
+            finalVoxelGrid = self.normalize(finalVoxelGrid)
+
         del stackedGrid
 
         return finalVoxelGrid
@@ -223,10 +266,10 @@ class GMMClusteringLayer(tfk.layers.Layer):
             self.initWeights = tfk.initializers.constant(np.ones(shape=[self.nClusters], dtype=float)* (1./self.nClusters))
 
         if means is None:
-            self.initMeans = tf.random_uniform_initializer(minval=0.0, maxval=100.0)
+            self.initMeans = tf.random_uniform_initializer(minval=-1.0, maxval=1.0)
 
         if variance is None:
-            self.initVariance = tf.random_uniform_initializer(minval=0.0, maxval=100.0)
+            self.initVariance = tf.random_uniform_initializer(minval=-1.0, maxval=1.0)
 
     def build(self, input_shape):
         val = np.log(2 * np.pi) * input_shape[-1]

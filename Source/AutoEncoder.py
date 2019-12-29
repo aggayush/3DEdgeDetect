@@ -9,7 +9,7 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
-from Source.CustamLayer import WeightedLoss
+from Source.CustamLayer import WeightedLoss, MergePointCloud
 from Source.utilities import path_reader, visualize_from_file, visualize_point_cloud
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -29,14 +29,14 @@ class AutoEncoder:
             self.modelPath = './Model/'
             self.logDir = './log/'
             self.modelName = 'encoder_decoder.h5'
-            self.isTrain = True
+            self.isTrain = False
             self.isStreamed = False
             self.usePreTrained = True
             self.batchSize = 40
             self.shuffleBufferSize = 1000
             self.activation = 'relu'
             self.dropoutRate = 0.01
-            self.learningRate = 0.01
+            self.learningRate = 0.001
             self.epochs = 300
             self.trainValRatio = 0.2
         else:
@@ -156,18 +156,33 @@ class AutoEncoder:
                                    activation=self.activation,
                                    input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
                                    name='Encoder_Conv1')(input)
+        branch1 = tfk.layers.Conv3D(1,
+                                    (1, 1, 1),
+                                    strides=(1, 1, 1),
+                                    padding='same',
+                                    name='Branch1_Conv1')(layers)
         layers = tfk.layers.Conv3D(5,
                                    (3, 3, 3),
                                    strides=(2, 2, 2),
                                    padding='same',
                                    activation=self.activation,
                                    name='Encoder_Conv2')(layers)
+        branch2 = tfk.layers.Conv3D(1,
+                                    (1, 1, 1),
+                                    strides=(1, 1, 1),
+                                    padding='same',
+                                    name='Branch2_Conv1')(layers)
         layers = tfk.layers.Conv3D(5,
                                    (3, 3, 3),
                                    strides=(2, 2, 2),
                                    padding='same',
                                    activation=self.activation,
                                    name='Encoder_Conv3')(layers)
+        branch3 = tfk.layers.Conv3D(1,
+                                    (1, 1, 1),
+                                    strides=(1, 1, 1),
+                                    padding='same',
+                                    name='Branch3_Conv1')(layers)
         layers = tfk.layers.Conv3DTranspose(5,
                                             (3, 3, 3),
                                             strides=(2, 2, 2),
@@ -187,20 +202,24 @@ class AutoEncoder:
                                      padding='same',
                                      activation='sigmoid',
                                      name='FinalOut')(layers)
+        outFinal_branch = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
+                                  'sum',
+                                  trainable=True)([branch1, branch2, branch3])
+        outFinal_branch = tfk.layers.Activation('sigmoid')(outFinal_branch)
 
-        self.model = tfk.Model(inputs=input, outputs=outFinal)
+        self.model = tfk.Model(inputs=input, outputs=[outFinal, outFinal_branch])
 
         self.model.summary()
 
     def train(self):
 
-        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, decay=self.learningRate/(self.epochs*250), clipvalue=10.0)
+        opt = tfk.optimizers.Adam(learning_rate=self.learningRate, decay=self.learningRate/(self.epochs*75), clipvalue=10.0)
         loss = WeightedLoss(4, 2, 1)
 
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
 
-            return loss(tar, tar_)
+            return loss(tar[0], tar_[0]) + loss(tar[1], tar_[1])
 
         def grad(inp, tar):
             with tf.GradientTape() as tape:
@@ -213,7 +232,7 @@ class AutoEncoder:
             epochValLossAvg = tfk.metrics.Mean()
             iteration = 0
             for x, c, f in self.trainDataset:
-                y = x
+                y = [x, x]
 
                 grads = grad(x, y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
@@ -225,7 +244,7 @@ class AutoEncoder:
                 iteration = iteration + 1
 
             for x, c, f in self.testDataset:
-                y = x
+                y = [x, x]
                 lossVal = calc_loss(x, y)
                 epochValLossAvg.update_state(lossVal)
 
@@ -239,13 +258,30 @@ class AutoEncoder:
     def predict(self):
 
         for x, c, f in self.testDataset:
-            pred = self.model(x)
-            pred = pred.numpy()
-            pred = pred[0, :, :, :, 4]
-            indexX, indexY, indexZ = np.where(pred < 0.05)
+            pred = x.numpy()
+            pred = pred[0, :, :, :, 0]
+            indexX, indexY, indexZ = np.where(pred > 0)
             pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            visualize_point_cloud(pointCloud)
+            preds = self.model(x)
+            pred = preds[0].numpy()
+            pred = pred[0, :, :, :, 0]
+            indexX, indexY, indexZ = np.where(pred > 0.1)
+            pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
+            pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
+            pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
+            pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+            visualize_point_cloud(pointCloud)
+            pred = preds[1].numpy()
+            pred = pred[0, :, :, :, 0]
+            indexX, indexY, indexZ = np.where(pred < -1)
+            siz = 8
+            pointsX = (indexX - (siz / 2)) / (siz / 2) + (1 / siz)
+            pointsY = (indexY - (siz / 2)) / (siz / 2) + (1 / siz)
+            pointsZ = (indexZ - (siz / 2)) / (siz / 2) + (1 / siz)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
             visualize_point_cloud(pointCloud)
 
