@@ -9,6 +9,7 @@ import tensorflow.keras as tfk
 import math
 import glob
 import numpy as np
+import time
 from Source.CustamLayer import SobelFilter, MergePointCloud, WeightedLoss, KMeansClusteringLayer, MinPooling3D, \
     GMMClusteringLayer
 from tensorflow.python.framework.ops import disable_eager_execution
@@ -240,9 +241,9 @@ class ThreeDEdgeDetector:
         outFinal_clus = KMeansClusteringLayer(nClusters=2, name='kmm_clus')(outFinal_clus)
 
         self.model = tfk.Model(inputs=input, outputs=[outFinal_clus, outFinal_enc, outFinal_encdec])
+        # self.model = tfk.Model(inputs=input, outputs=outFinal_clus)
 
         self.model.summary()
-        tfk.utils.plot_model(self.model, to_file='D:\\final_model.png', show_shapes=True)
 
     def train(self):
 
@@ -321,9 +322,11 @@ class ThreeDEdgeDetector:
 
     def predict(self):
 
-        i = 0
+        # i = 0
+        # diff = 0
+        # start_time = time.time()
         for x, c, f in self.testDataset:
-            print(i)
+            # print(i)
             inp = x.numpy()
             inp = inp[0, :, :, :, 0]
             indexX, indexY, indexZ = np.where(inp > 0)
@@ -331,9 +334,11 @@ class ThreeDEdgeDetector:
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            # visualize_point_cloud(pointCloud)
-            save_point_cloud(pointCloud, self.outputPath, str(i) + "_orig")
+            visualize_point_cloud(pointCloud)
+            # save_point_cloud(pointCloud, self.outputPath, str(i) + "_orig")
+            # stime = time.time()
             preds = self.model(x)
+            # diff = diff + (time.time() - stime )
             # pred1 = preds[1]
             # pred1 = pred1.numpy()
             # pred1 = pred1[0, :, :, :, 0]
@@ -360,8 +365,8 @@ class ThreeDEdgeDetector:
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            # visualize_point_cloud(pointCloud)
-            save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5")
+            visualize_point_cloud(pointCloud)
+            # save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5")
             idx = np.where(pred_val[indexX, indexY, indexZ] > 0.6)
             indexX = np.delete(indexX, idx)
             indexY = np.delete(indexY, idx)
@@ -370,13 +375,16 @@ class ThreeDEdgeDetector:
             pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-            # visualize_point_cloud(pointCloud)
-            save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5l6")
-            i = i + 1
+            visualize_point_cloud(pointCloud)
+            # save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5l6")
+            # i = i + 1
+
+        # end_time = time.time()
+        # print("--- {:.10f} seconds with data load time ---".format((end_time - start_time)/1000))
+        # print("--- {:.10f} seconds without data load time ---".format(diff/1000))
 
     def run(self):
 
-        # disable_eager_execution()
         try:
             self.read_data()
         except Exception as e:
@@ -389,32 +397,6 @@ class ThreeDEdgeDetector:
 
         if self.usePreTrained:
             self.load_weights()
-
-        # data = next(iter(self.testDataset))
-        # clus = GMMClusteringLayer(nClusters=2)
-        # out = clus(data[0])
-        # out = thr(data[0])
-        # # sob = SobelFilter()
-        # # out = sob(data[0])
-        # dat = tf.concat([data[0], data[0]], axis=-1)
-        # merg = MergePointCloud([128,128,128], 'avg')
-        # out = merg([dat, dat])
-        # out = out.numpy()
-        # out = out[0, :, :, :, 0:3]
-        # out = np.sqrt(np.sum(np.square(out), axis=-1))
-        # # out = data[0].numpy()
-        # # out = out[0,:,:,:,0]
-        # # out = np.argmax(out, axis=-1)
-        # inp=out
-        # # inp = np.abs(inp)
-        # # indexX, indexY, indexZ = np.where(inp > 0.3)
-        # # inp[indexX, indexY, indexZ] = 0
-        # indexX, indexY, indexZ = np.where(inp > 1)
-        # pointsX = (indexX - (self.VOXEL_GRID_X / 2)) / (self.VOXEL_GRID_X / 2) + (1 / self.VOXEL_GRID_X)
-        # pointsY = (indexY - (self.VOXEL_GRID_Y / 2)) / (self.VOXEL_GRID_Y / 2) + (1 / self.VOXEL_GRID_Y)
-        # pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
-        # pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-        # visualize_point_cloud(pointCloud)
 
         if self.isTrain:
             self.train()

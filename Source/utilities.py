@@ -113,7 +113,7 @@ def save_point_cloud(points, path, name):
 
 def visualize_point_cloud(points):
     pcd = open3d.geometry.PointCloud()
-    cord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
+    cord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[-1, -1, -1])
     pcd.points = open3d.utility.Vector3dVector(np.array(points))
     open3d.visualization.draw_geometries([pcd, cord])
 
