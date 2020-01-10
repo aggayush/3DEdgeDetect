@@ -122,36 +122,64 @@ class MergePointCloud(tfk.layers.Layer):
 
     def normalize(self, grid):
         grid_shape = tf.shape(grid)
-        reshaped_grid = tf.reshape(grid, (grid_shape[0], -1))
-        max = tf.expand_dims(
-            tf.tile(
-                tf.expand_dims(
-                    tf.tile(
-                        tf.expand_dims(
-                            tf.tile(
-                                tf.reduce_max(reshaped_grid, axis=1, keepdims=True),
-                                [1, grid_shape[1]]),
-                            axis=-1),
-                        [1, 1, grid_shape[2]]),
-                    axis=-1),
-                [1, 1, 1, grid_shape[3]]),
-            axis=-1)
-        min = tf.expand_dims(
-            tf.tile(
-                tf.expand_dims(
-                    tf.tile(
-                        tf.expand_dims(
-                            tf.tile(
-                                tf.reduce_min(reshaped_grid, axis=1, keepdims=True),
-                                [1, grid_shape[1]]),
-                            axis=-1),
-                        [1, 1, grid_shape[2]]),
-                    axis=-1),
-                [1, 1, 1, grid_shape[3]]),
-            axis=-1)
-        diff = 2.0/(max-min)
-        grid = diff * grid - 1.0
+        reshaped_grid = tf.reshape(grid, (grid_shape[0], -1, grid_shape[-1]))
+        idx = tf.constant(0, dtype=tf.int32)
+        if grid_shape[0] < grid_shape[-1]:
+            maxtp = tf.zeros((1, grid_shape[-1]), dtype=tf.float32)
+            mintp = tf.zeros((1, grid_shape[-1]), dtype=tf.float32)
 
+            cond = lambda i, g, mxtp, mntp: tf.less(i, grid_shape[0])
+
+            def body(i, g, mxtp, mntp):
+                temp = g[i, :, :]
+                max_temp = tf.reduce_max(temp, axis=0, keepdims=True)
+                min_temp = tf.reduce_min(temp, axis=0, keepdims=True)
+                mxtp = tf.concat([mxtp, max_temp], axis=0)
+                mntp = tf.concat([mntp, min_temp], axis=0)
+                i = i + 1
+
+                return [i, g, mxtp, mntp]
+
+            final_out = tf.while_loop(cond, body, [idx, reshaped_grid, maxtp, mintp],
+                                      shape_invariants=[tf.TensorShape(None), tf.TensorShape([None, None, None]),
+                                                        tf.TensorShape([None, None]), tf.TensorShape([None, None])],
+                                      parallel_iterations=1)
+            max = final_out[2]
+            max = max[1:, :]
+            min = final_out[3]
+            min = min[1:, :]
+
+        else:
+            maxtp = tf.zeros((grid_shape[0], 1), dtype=tf.float32)
+            mintp = tf.zeros((grid_shape[0], 1), dtype=tf.float32)
+
+            cond = lambda i, g, mxtp, mntp: tf.less(i, grid_shape[-1])
+
+            def body(i, g, mxtp, mntp):
+                temp = g[:, :, i]
+                max_temp = tf.reduce_max(temp, axis=-1, keepdims=True)
+                min_temp = tf.reduce_min(temp, axis=-1, keepdims=True)
+                mxtp = tf.concat([mxtp, max_temp], axis=-1)
+                mntp = tf.concat([mntp, min_temp], axis=-1)
+                i = i + 1
+
+                return [i, g, mxtp, mntp]
+
+            final_out = tf.while_loop(cond, body, [idx, reshaped_grid, maxtp, mintp],
+                                      shape_invariants=[tf.TensorShape(None), tf.TensorShape([None, None, None]),
+                                                        tf.TensorShape([None, None]), tf.TensorShape([None, None])],
+                                      parallel_iterations=1)
+            max = final_out[2]
+            max = max[:, 1:]
+            min = final_out[3]
+            min = min[:, 1:]
+
+        reshaped_grid_shape = tf.shape(reshaped_grid)
+        max = tf.reshape(tf.tile(tf.expand_dims(max, axis=1), [1, reshaped_grid_shape[1], 1]), grid_shape)
+        min = tf.reshape(tf.tile(tf.expand_dims(min, axis=1), [1, reshaped_grid_shape[1], 1]), grid_shape)
+
+        diff = 1.0 / (max - min)
+        grid = diff * (grid - min)
 
         del reshaped_grid
         del min
@@ -243,18 +271,19 @@ class SobelFilter(tfk.layers.Layer):
                                        use_bias=False, name='Sobel_ConvZ')
 
     def call(self, input):
-        x = tf.divide(self.convX(input), 16.0)
-        y = tf.divide(self.convY(input), 16.0)
-        z = tf.divide(self.convZ(input), 16.0)
+        x = tf.abs(tf.divide(self.convX(input), 16.0))
+        y = tf.abs(tf.divide(self.convY(input), 16.0))
+        z = tf.abs(tf.divide(self.convZ(input), 16.0))
 
-        ang_xy = tf.atan(y/(x+1e-5))
-        ang_xz = tf.atan(z/(x+1e-5))
-        ang_yz = tf.atan(z/(y+1e-5))
+        # ang_xy = tf.atan(y/(x+1e-5))
+        # ang_xz = tf.atan(z/(x+1e-5))
+        # ang_yz = tf.atan(z/(y+1e-5))
 
         mag = tf.sqrt(tf.add_n([tf.square(x), tf.square(y), tf.square(z)]))
 
         # return tf.concat([mag, ang_xy, ang_xz, ang_yz], axis=-1)
         return mag
+        # return tf.concat([x, y, z], axis=-1)
 
 
 class GMMClusteringLayer(tfk.layers.Layer):
@@ -263,7 +292,8 @@ class GMMClusteringLayer(tfk.layers.Layer):
         super(GMMClusteringLayer, self).__init__(**kwargs)
         self.nClusters = nClusters
         if weights is None:
-            self.initWeights = tfk.initializers.constant(np.ones(shape=[self.nClusters], dtype=float)* (1./self.nClusters))
+            self.initWeights = tfk.initializers.constant(
+                np.ones(shape=[self.nClusters], dtype=float) * (1. / self.nClusters))
 
         if means is None:
             self.initMeans = tf.random_uniform_initializer(minval=-1.0, maxval=1.0)
@@ -274,8 +304,10 @@ class GMMClusteringLayer(tfk.layers.Layer):
     def build(self, input_shape):
         val = np.log(2 * np.pi) * input_shape[-1]
         self.ln2piD = tf.constant(val, dtype=tf.float32)
-        self.means = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initMeans, name='gmm_mean')
-        self.variance = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initVariance, name='gmm_variance')
+        self.means = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initMeans,
+                                     name='gmm_mean')
+        self.variance = self.add_weight(shape=(self.nClusters, input_shape[-1]), initializer=self.initVariance,
+                                        name='gmm_variance')
         self.clusWeights = self.add_weight(shape=(self.nClusters,), initializer=self.initWeights)
         self.built = True
 
@@ -302,7 +334,8 @@ class KMeansClusteringLayer(tfk.layers.Layer):
 
     def build(self, input_shape):
         feat_dim = input_shape[-1]
-        self.clusters = self.add_weight(shape=(self.nClusters, feat_dim), initializer=tfk.initializers.glorot_uniform, name='Clusters')
+        self.clusters = self.add_weight(shape=(self.nClusters, feat_dim), initializer=tfk.initializers.glorot_uniform,
+                                        name='Clusters')
         if self.initWeights is not None:
             self.set_weights(self.initWeights)
             del self.initWeights
@@ -310,8 +343,8 @@ class KMeansClusteringLayer(tfk.layers.Layer):
 
     def call(self, inputs):
         dist = tf.reduce_sum(tf.square(tf.subtract(tf.expand_dims(inputs, axis=-2), self.clusters)), axis=-1)
-        pdf = 1.0 / (1.0 + dist/self.alpha)
-        pdf = tf.pow(pdf, ((self.alpha + 1.0)/2.0))
+        pdf = 1.0 / (1.0 + dist / self.alpha)
+        pdf = tf.pow(pdf, ((self.alpha + 1.0) / 2.0))
         pdf = tf.divide(pdf, tf.expand_dims(tf.reduce_sum(pdf, axis=-1), axis=-1))
 
         return pdf
@@ -375,8 +408,8 @@ class WeightedLoss(tfk.losses.Loss):
         return tf.nn.softmax_cross_entropy_with_logits(y_true, y_pred)
 
     def weighted_mean_square_error(self, y_true, y_pred):
-        y_true = tf.reshape(y_true, [-1,])
-        y_pred = tf.reshape(y_pred, [-1,])
+        y_true = tf.reshape(y_true, [-1, ])
+        y_pred = tf.reshape(y_pred, [-1, ])
 
         pos_idx = tf.where(y_true == 1.0)
         neg_idx = tf.where(y_true == 0.0)
@@ -384,7 +417,8 @@ class WeightedLoss(tfk.losses.Loss):
         pos_idx = tf.reshape(pos_idx, [-1, ])
         neg_idx = tf.reshape(neg_idx, [-1, ])
 
-        pos_mse = tf.reduce_mean(tf.multiply(tf.square(tf.gather(y_true, pos_idx) - tf.gather(y_pred, pos_idx)), self.pos_weight))
+        pos_mse = tf.reduce_mean(
+            tf.multiply(tf.square(tf.gather(y_true, pos_idx) - tf.gather(y_pred, pos_idx)), self.pos_weight))
         neg_mse = tf.reduce_mean(tf.square(tf.gather(y_true, neg_idx) - tf.gather(y_pred, neg_idx))) * self.weight
 
         return tf.add(pos_mse, neg_mse)

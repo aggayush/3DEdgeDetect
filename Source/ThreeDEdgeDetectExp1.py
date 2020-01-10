@@ -22,7 +22,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # disable_eager_execution()
 
 
-class ThreeDEdgeDetector:
+class ThreeDEdgeDetectorExp1:
     VOXEL_GRID_X = 32
     VOXEL_GRID_Y = 32
     VOXEL_GRID_Z = 32
@@ -35,9 +35,9 @@ class ThreeDEdgeDetector:
             self.outputPath = './Output/'
             self.modelPath = './Model/'
             self.logDir = './log/'
-            self.modelName = 'edge_model.h5'
+            self.modelName = 'edge_model_exp1_mnist.h5'
             self.encoderModelName = 'encoder_decoder.h5'
-            self.isTrain = True
+            self.isTrain = False
             self.isStreamed = False
             self.usePreTrained = True
             self.batchSize = 40
@@ -45,7 +45,7 @@ class ThreeDEdgeDetector:
             self.activation = 'relu'
             self.dropoutRate = 0.01
             self.learningRate = 0.01
-            self.epochs = 300
+            self.epochs = 50
         else:
             self.trainDataPath = args.trainDataPath
             self.testDataPath = args.testDataPath
@@ -245,89 +245,12 @@ class ThreeDEdgeDetector:
 
         input = tfk.Input(shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1), batch_size=self.batchSize)
 
-        enc_layers = tfk.layers.Conv3D(5,
-                                       (3, 3, 3),
-                                       padding='same',
-                                       activation=self.activation,
-                                       input_shape=(self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z, 1),
-                                       name='Encoder_Conv1')(input)
+        branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(input)
+        outFinal_clus = tfk.layers.Activation('relu')(branch1)
+        # outFinal_clus = tfk.layers.BatchNormalization()(outFinal_clus)
+        outFinal_clus = KMeansClusteringLayer(nClusters=2, name='kmm_clus')(outFinal_clus)
 
-        branch11 = tfk.layers.Conv3D(1,
-                                     (1, 1, 1),
-                                     strides=(1, 1, 1),
-                                     padding='same',
-                                     name='Branch1_Conv1')(enc_layers)
-        branch1 = SobelFilter(name='Branch1_Sobel1', trainable=False)(branch11)
-        branch1 = tfk.layers.Activation(activation=self.activation, name='Branch1_Act')(branch1)
-        branch1 = tfk.layers.BatchNormalization(name='Branch1_BatchNorm')(branch1)
-
-        enc_layers = tfk.layers.Conv3D(5,
-                                       (3, 3, 3),
-                                       strides=(2, 2, 2),
-                                       padding='same',
-                                       activation=self.activation,
-                                       name='Encoder_Conv2')(enc_layers)
-
-        branch21 = tfk.layers.Conv3D(1,
-                                     (1, 1, 1),
-                                     strides=(1, 1, 1),
-                                     padding='same',
-                                     name='Branch2_Conv1')(enc_layers)
-        branch2 = SobelFilter(name='Branch2_Sobel1', trainable=False)(branch21)
-        branch2 = tfk.layers.Activation(activation=self.activation, name='Branch2_Act')(branch2)
-        branch2 = tfk.layers.BatchNormalization(name='Branch2_BatchNorm')(branch2)
-
-        enc_layers = tfk.layers.Conv3D(5,
-                                       (3, 3, 3),
-                                       strides=(2, 2, 2),
-                                       padding='same',
-                                       activation=self.activation,
-                                       name='Encoder_Conv3')(enc_layers)
-
-        branch31 = tfk.layers.Conv3D(1,
-                                     (1, 1, 1),
-                                     strides=(1, 1, 1),
-                                     padding='same',
-                                     name='Branch3_Conv1')(enc_layers)
-        branch3 = SobelFilter(name='Branch3_Sobel1', trainable=False)(branch31)
-        branch3 = tfk.layers.Activation(activation=self.activation, name='Branch3_Act')(branch3)
-        branch3 = tfk.layers.BatchNormalization(name='Branch3_BatchNorm')(branch3)
-
-        dec_layers = tfk.layers.Conv3DTranspose(5,
-                                                (3, 3, 3),
-                                                strides=(2, 2, 2),
-                                                padding='same',
-                                                activation=self.activation,
-                                                name='DeConv3')(enc_layers)
-        dec_layers = tfk.layers.BatchNormalization(name='BatchNorm3')(dec_layers)
-        dec_layers = tfk.layers.Conv3DTranspose(5,
-                                                (3, 3, 3),
-                                                strides=(2, 2, 2),
-                                                padding='same',
-                                                activation=self.activation,
-                                                name='DeConv2')(dec_layers)
-        dec_layers = tfk.layers.BatchNormalization(name='BatchNorm2')(dec_layers)
-        outFinal_encdec = tfk.layers.Conv3D(1,
-                                            (3, 3, 3),
-                                            padding='same',
-                                            activation='sigmoid',
-                                            name='Encoder_decoder_out')(dec_layers)
-
-        outFinal_enc = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
-                                       'avg',
-                                       normalize=False,
-                                       name='encoder_merge',
-                                       trainable=True)([branch11, branch21, branch31])
-        outFinal_enc = tfk.layers.Activation('sigmoid', name='Encoder_branch_out')(outFinal_enc)
-
-        outFinal_clus = MergePointCloud([self.VOXEL_GRID_X, self.VOXEL_GRID_Y, self.VOXEL_GRID_Z],
-                                        'sum',
-                                        normalize=True,
-                                        trainable=True)([branch1, branch2, branch3])
-        outFinal_clus = tfk.layers.Activation('relu')(outFinal_clus)
-        outFinal_clus = KMeansClusteringLayer(nClusters=2, name='kmm_clus1')(outFinal_clus)
-
-        self.model = tfk.Model(inputs=input, outputs=[outFinal_clus, outFinal_enc, outFinal_encdec])
+        self.model = tfk.Model(inputs=input, outputs=outFinal_clus)
         # self.model = tfk.Model(inputs=input, outputs=outFinal_clus)
 
         self.model.summary()
@@ -342,7 +265,7 @@ class ThreeDEdgeDetector:
         def calc_loss(inp, tar):
             tar_ = self.model(inp)
 
-            return loss_clus(tar[0], tar_[0]) + loss_enc(tar[1], tar_[1]) + loss_enc(tar[2], tar_[2])
+            return loss_clus(tar, tar_)
 
         def grad(inp, tar):
             with tf.GradientTape() as tape:
@@ -351,7 +274,7 @@ class ThreeDEdgeDetector:
 
         def update_target_distribution(q):
             freq = tf.reduce_sum(tf.reshape(q, (-1, 2)), axis=0)
-            weight = tf.divide(q**2, freq)
+            weight = tf.divide(q, freq)
             weight = tf.divide(weight, tf.expand_dims(tf.reduce_sum(weight, axis=-1), axis=-1))
 
             return weight
@@ -368,9 +291,9 @@ class ThreeDEdgeDetector:
                 for x, c, f in self.trainDataset:
                     p = self.model(x)
                     if whole_pred is None:
-                        whole_pred = p[0]
+                        whole_pred = p
                     else:
-                        whole_pred = tf.concat([whole_pred, p[0]], axis=0)
+                        whole_pred = tf.concat([whole_pred, p], axis=0)
 
                 y = update_target_distribution(whole_pred)
 
@@ -387,10 +310,10 @@ class ThreeDEdgeDetector:
 
             iteration = 0
             for x, y in finalDataset:
-                grads = grad(x[0], [y, x[0], x[0]])
+                grads = grad(x[0], y)
                 opt.apply_gradients(zip(grads, self.model.trainable_variables))
 
-                lossVal = calc_loss(x[0], [y, x[0], x[0]])
+                lossVal = calc_loss(x[0], y)
                 epochTrainLossAvg.update_state(lossVal)
 
                 print("iter {:04d}: Train_loss: {:.8f}".format(iteration, lossVal))
@@ -426,9 +349,9 @@ class ThreeDEdgeDetector:
             # stime = time.time()
             preds = self.model(x)
             # # diff = diff + (time.time() - stime )
-            pred1 = preds[1]
-            pred1 = pred1.numpy()
-            pred1 = pred1[0, :, :, :, 0]
+            # pred1 = preds[1]
+            # pred1 = pred1.numpy()
+            # pred1 = pred1[0, :, :, :, 0]
             # indexX, indexY, indexZ = np.where(pred1 > 0.5)
             # siz = 32
             # pointsX = (indexX - (siz / 2)) / (siz / 2) + (1 / siz)
@@ -436,15 +359,15 @@ class ThreeDEdgeDetector:
             # pointsZ = (indexZ - (siz / 2)) / (siz / 2) + (1 / siz)
             # pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
             # visualize_point_cloud(pointCloud)
-            pred = preds[0]
+            pred = preds
             pred = pred.numpy()
             pred = pred[0, :, :, :, :]
             # visualize_histogram(pred)
             # pred = 1 - pred
             pred_idx = np.argmax(pred, axis=-1)
             pred_val = np.max(pred, axis=-1)
-            indexX, indexY, indexZ = np.where(pred_idx > 0)
-            idx = np.where(pred_val[indexX, indexY, indexZ] < 0.8)
+            indexX, indexY, indexZ = np.where(pred_idx == 1)
+            idx = np.where(pred_val[indexX, indexY, indexZ] < 0.5)
             indexX = np.delete(indexX, idx)
             indexY = np.delete(indexY, idx)
             indexZ = np.delete(indexZ, idx)
@@ -453,7 +376,7 @@ class ThreeDEdgeDetector:
             pointsZ = (indexZ - (self.VOXEL_GRID_Z / 2)) / (self.VOXEL_GRID_Z / 2) + (1 / self.VOXEL_GRID_Z)
             pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
             colors = create_color_from_val(pred_val[indexX, indexY, indexZ])
-            visualize_point_cloud(pointCloud, colors)
+            visualize_point_cloud(pointCloud)
             # save_point_cloud(pointCloud, self.outputPath, str(i) + "_predg5")
             idx = np.where(pred_val[indexX, indexY, indexZ] > 0.7)
             indexX = np.delete(indexX, idx)

@@ -111,31 +111,51 @@ def save_point_cloud(points, path, name):
     pcd.points = open3d.utility.Vector3dVector(np.array(points))
     open3d.io.write_point_cloud(join(path, name + ".pcd"), pcd)
 
-def visualize_point_cloud(points):
+def visualize_point_cloud(points, color=None):
     pcd = open3d.geometry.PointCloud()
-    cord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[-1, -1, -1])
+    cord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
     pcd.points = open3d.utility.Vector3dVector(np.array(points))
+    if color is not None:
+        pcd.colors = open3d.utility.Vector3dVector(np.array(color))
     open3d.visualization.draw_geometries([pcd, cord])
 
     return pcd
 
 def visualize_histogram(grid):
-    grid = np.squeeze(grid, -1)
-    indexX, indexY, indexZ = np.where(grid > 0)
-    pointsX = (indexX - (32 / 2)) / (32 / 2) + (1 / 32)
-    pointsY = (indexY - (32 / 2)) / (32 / 2) + (1 / 32)
-    pointsZ = (indexZ - (32 / 2)) / (32 / 2) + (1 / 32)
-    pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
-    visualize_point_cloud(pointCloud)
-    mu = np.array([0.924962, 0.88241327])
-    var = np.array([0.80146676, 0.6133731])
-    wei = np.array([0.53551096, 0.47112384])
-    grid = np.reshape(grid, [-1, ])
-    plt.hist(grid, bins='auto')
+    # grid = np.squeeze(grid, -1)
+    grid = np.reshape(grid, (-1, 3))
+    # indexX, indexY, indexZ = np.where(grid > 30)
+    # pointsX = (indexX - (32 / 2)) / (32 / 2) + (1 / 32)
+    # pointsY = (indexY - (32 / 2)) / (32 / 2) + (1 / 32)
+    # pointsZ = (indexZ - (32 / 2)) / (32 / 2) + (1 / 32)
+    # pointCloud = np.stack([pointsX, pointsY, pointsZ], axis=1)
+    visualize_point_cloud(grid)
+    # mu = np.array([0.924962, 0.88241327])
+    # var = np.array([0.80146676, 0.6133731])
+    # wei = np.array([0.53551096, 0.47112384])
+    # grid = np.reshape(grid, [-1, ])
+    # plt.hist(grid, bins='auto')
     # x = np.linspace(np.min(grid), np.max(grid), 1000)
-    for idx in range(2):
-        x = np.linspace(mu[idx] - 5*np.sqrt(var[idx]), mu[idx] + 5*np.sqrt(var[idx]), 1000)
-        pdf = wei[idx] * stats.norm.pdf(x, mu[idx], np.sqrt(var[idx]))
-        plt.fill(x, pdf, facecolor='gray', edgecolor='none', alpha=0.4)
-    plt.show()
+    # for idx in range(2):
+    #     x = np.linspace(mu[idx] - 5*np.sqrt(var[idx]), mu[idx] + 5*np.sqrt(var[idx]), 1000)
+    #     pdf = wei[idx] * stats.norm.pdf(x, mu[idx], np.sqrt(var[idx]))
+    #     plt.fill(x, pdf, facecolor='gray', edgecolor='none', alpha=0.4)
+    # plt.show()
+
+def create_color_from_val(intensity):
+    intensity = np.array(intensity)
+    uniq_int, rev_index = np.unique(intensity, return_inverse=True)
+    nop = len(uniq_int)
+    int_values = np.linspace(start=1, stop=0, num=nop, dtype=float)
+
+    colors = None
+
+    for idx in range(len(intensity)):
+        val = np.array([[int_values[rev_index[idx]], int_values[rev_index[idx]], int_values[rev_index[idx]]]])
+        if colors is None:
+            colors = val
+        else:
+            colors = np.concatenate((colors, val), axis=0)
+
+    return colors
 
